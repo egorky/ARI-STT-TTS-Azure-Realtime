@@ -22,18 +22,28 @@ async function initialize() {
     }
 }
 
+const { addWavHeader } = require('./wav-helper');
+
 /**
- * Saves an audio buffer to a temporary WAV file.
+ * Saves a raw PCM audio buffer to a temporary, valid WAV file.
  * The filename is unique.
- * @param {Buffer} audioBuffer - The audio data to save.
+ * @param {Buffer} pcmAudioBuffer - The raw PCM audio data.
  * @returns {Promise<object>} A promise that resolves with an object containing the full path and the sound URI.
  */
-async function saveTempAudio(audioBuffer) {
+async function saveTempAudio(pcmAudioBuffer) {
     const filename = `${uuidv4()}.wav`;
     const filePath = path.join(tempDir, filename);
 
     try {
-        await fs.writeFile(filePath, audioBuffer);
+        // Hardcoding format based on Azure's output 'Riff8Khz16BitMonoPcm'
+        const wavOptions = {
+            numChannels: 1,
+            sampleRate: 8000,
+            bitDepth: 16,
+        };
+        const wavBuffer = addWavHeader(pcmAudioBuffer, wavOptions);
+
+        await fs.writeFile(filePath, wavBuffer);
 
         // The sound URI for ARI playback should not include the file extension.
         const soundUri = `sound:${path.join(tempDir, filename.replace('.wav', ''))}`;

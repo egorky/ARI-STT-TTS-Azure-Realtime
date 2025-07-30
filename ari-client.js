@@ -219,9 +219,15 @@ class App {
             // We can also force it if needed, but letting Azure detect the end of speech is often better.
         });
 
+        // The format for TALK_DETECT is a string of key=value pairs.
+        // Example: "speech_threshold=500,silence_threshold=1200"
+        const talkDetectValue = `speech_threshold=${config.app.talkDetect.speechThreshold},silence_threshold=${config.app.talkDetect.silenceThreshold}`;
+
         mainChannel.setChannelVar({
             variable: 'TALK_DETECT(set)',
-            value: `speech_threshold=${config.app.talkDetect.speechThreshold},silence_threshold=${config.app.talkDetect.silenceThreshold}`
+            value: talkDetectValue
+        }).catch(err => {
+            console.error(`Failed to set TALK_DETECT on channel ${mainChannel.id}:`, err);
         });
     }
 
