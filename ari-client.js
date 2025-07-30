@@ -177,6 +177,7 @@ class App {
 
     async playTtsAudio(callState, text) {
         const { mainChannel, userBridge } = callState;
+        callState.isPlayingPrompt = true;
 
         try {
             const ttsAudioStream = await this.azureService.synthesizeText(text);
@@ -256,6 +257,9 @@ class App {
 
         } catch (err) {
             logger.error(`Error during TTS streaming playback for channel ${mainChannel.id}:`, err);
+        } finally {
+            callState.isPlayingPrompt = false;
+            logger.info('Finished playing prompt.');
         }
     }
 
@@ -264,11 +268,19 @@ class App {
         logger.info(`Enabling talk detection on channel ${mainChannel.id}`);
 
         mainChannel.on('ChannelTalkingStarted', () => {
+            if (callState.isPlayingPrompt) {
+                logger.info('Talk event ignored during prompt playback.');
+                return;
+            }
             logger.info(`Talking started on ${mainChannel.id}. Starting recognition.`);
             callState.isRecognizing = true;
         });
 
         mainChannel.on('ChannelTalkingFinished', (event) => {
+            if (callState.isPlayingPrompt) {
+                logger.info('Talk finish event ignored during prompt playback.');
+                return;
+            }
             logger.info(`Talking finished on ${mainChannel.id}. Duration: ${event.duration} ms. Stopping recognition stream.`);
             callState.isRecognizing = false;
 
