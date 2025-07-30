@@ -274,7 +274,12 @@ class App {
 
                 // Save the full audio file as soon as the stream ends
                 const fullAudioBuffer = Buffer.concat(allChunks);
-                const finalAudioPath = await soundManager.saveFinalAudio(fullAudioBuffer, mainChannel.id, logger);
+            const finalAudioPath = await soundManager.saveFinalAudio(
+                fullAudioBuffer,
+                'tts',
+                { uniqueId: mainChannel.id, callerId: mainChannel.caller.number },
+                logger
+            );
                 callState.synthesizedAudioPath = finalAudioPath;
 
                 if (!processing && chunkQueue.length === 0) {
