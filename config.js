@@ -38,6 +38,10 @@ const config = {
             activationMode: process.env.VAD_ACTIVATION_MODE || 'after_prompt_start',
             activationDelay: parseInt(process.env.VAD_ACTIVATION_DELAY_MS, 10) || 500,
         },
+        prompt: {
+            mode: process.env.PROMPT_MODE || 'tts',
+            playbackPath: process.env.PLAYBACK_FILE_PATH || '',
+        },
         timeouts: {
             session: parseInt(process.env.ARI_SESSION_TIMEOUT_MS, 10) || 60000,
             noInput: parseInt(process.env.NO_INPUT_TIMEOUT_MS, 10) || 10000,

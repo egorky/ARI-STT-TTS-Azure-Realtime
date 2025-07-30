@@ -115,9 +115,8 @@ class App {
             // 1. Setup audio snooping
             await this.setupAudioSnooping(callState);
 
-            // 3. Play audio in the background. Don't await it.
-            logger.info(`Synthesizing and playing prompt: "${textToSpeak}"`);
-            this.playTtsAudio(callState, textToSpeak);
+            // 3. Handle the prompt (TTS or Playback) in the background.
+            this.handlePrompt(callState, textToSpeak);
 
             // 4. The call will now wait until the user hangs up or recognition completes.
             // The logic continues in the StasisEnd handler or after recognitionPromise resolves.
@@ -208,8 +207,52 @@ class App {
         callState.logger.info(`Snoop bridge ${callState.snoopBridge.id} created.`);
     }
 
-    async playTtsAudio(callState, text) {
+    async handlePrompt(callState, textToSpeak) {
+        if (config.app.prompt.mode === 'playback') {
+            await this.playFileAudio(callState);
+        } else {
+            await this.streamTtsAudio(callState, textToSpeak);
+        }
+    }
+
+    async playFileAudio(callState) {
+        const { mainChannel, userBridge, logger } = callState;
+        const filePath = config.app.prompt.playbackPath;
+        if (!filePath) {
+            logger.error('Prompt mode is "playback" but PLAYBACK_FILE_PATH is not set.');
+            return;
+        }
+
+        logger.info(`Playing audio file: ${filePath}`);
+        callState.isPlayingPrompt = true;
+
+        try {
+            const playback = this.ariClient.Playback();
+            const playbackFinished = new Promise(resolve => playback.once('PlaybackFinished', resolve));
+
+            // Activate VAD based on config
+            if (config.app.vad.activationMode === 'after_prompt_start') {
+                setTimeout(() => this.enableTalkDetection(callState), config.app.vad.activationDelay);
+            }
+
+            await userBridge.play({ media: `sound:${filePath}`, playbackId: playback.id });
+            await playbackFinished;
+
+            if (config.app.vad.activationMode === 'after_prompt_end') {
+                this.enableTalkDetection(callState);
+            }
+
+        } catch(err) {
+            logger.error(`Error playing audio file ${filePath}:`, err);
+        } finally {
+            callState.isPlayingPrompt = false;
+            logger.info('Finished playing prompt file.');
+        }
+    }
+
+    async streamTtsAudio(callState, text) {
         const { mainChannel, userBridge, logger, azureService } = callState;
+        logger.info(`Synthesizing and playing prompt: "${text}"`);
         callState.isPlayingPrompt = true;
 
         try {
