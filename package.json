@@ -17,7 +17,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "ari-client": "^2.3.0",
+    "ari-client": "2.2.0",
     "microsoft-cognitiveservices-speech-sdk": "1.35.0",
     "dotenv": "^16.4.5",
     "g711": "^1.0.1",
