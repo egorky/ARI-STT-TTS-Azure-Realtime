@@ -30,7 +30,6 @@ const config = {
         },
     },
     app: {
-        waitForFullTtsAudio: (process.env.WAIT_FOR_FULL_TTS_AUDIO || 'false').toLowerCase() === 'true',
         talkDetectActivationDelay: parseInt(process.env.TALK_DETECT_ACTIVATION_DELAY_MS, 10) || 500,
         talkDetect: {
             silenceThreshold: parseInt(process.env.TALK_DETECT_SILENCE_THRESHOLD, 10) || 1200,
