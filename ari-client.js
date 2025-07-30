@@ -86,7 +86,9 @@ class App {
                 dtmf: null,
             },
             dtmfDigits: '',
-            recognitionMode: 'voice' // Can be 'voice' or 'dtmf'
+            recognitionMode: 'voice', // Can be 'voice' or 'dtmf'
+            sttAudioChunks: [],
+            sttAudioPath: null,
         };
 
         this.activeCalls.set(channel.id, callState);
@@ -171,6 +173,8 @@ class App {
 
         callState.rtpServer.on('audioPacket', (audio) => {
             if (callState.isRecognizing && callState.sttPushStream) {
+                // Keep the raw u-law audio for saving later
+                callState.sttAudioChunks.push(audio);
                 const pcmAudio = ulawToPcm(audio);
                 callState.sttPushStream.write(pcmAudio);
             }
@@ -333,6 +337,9 @@ class App {
 
             // Stop pre-buffering and get the buffered audio
             const preBufferedAudio = rtpServer.stopPreBufferingAndFlush();
+            if (preBufferedAudio.length > 0) {
+                callState.sttAudioChunks.push(preBufferedAudio);
+            }
 
             // Start the STT service and wait for the push stream to be ready
             const pushStream = await this.setupStt(callState);
@@ -417,13 +424,14 @@ class App {
     }
 
     async saveInteraction(callState) {
-        const { logger, mainChannel, textToSynthesize, synthesizedAudioPath, recognitionMode, finalTranscript, dtmfDigits } = callState;
+        const { logger, mainChannel, textToSynthesize, synthesizedAudioPath, sttAudioPath, recognitionMode, finalTranscript, dtmfDigits } = callState;
         try {
             await db.Interaction.create({
                 uniqueId: mainChannel.id,
                 callerId: mainChannel.caller.number,
                 textToSynthesize,
                 synthesizedAudioPath,
+                sttAudioPath,
                 recognitionMode,
                 transcript: finalTranscript,
                 dtmfResult: dtmfDigits,
@@ -435,8 +443,21 @@ class App {
     }
 
     async continueInDialplan(callState) {
-        const { mainChannel, logger } = callState;
+        const { mainChannel, logger, sttAudioChunks } = callState;
         if (callState && mainChannel) {
+
+            // Save the captured STT audio
+            if (sttAudioChunks.length > 0) {
+                const fullSttAudio = Buffer.concat(sttAudioChunks);
+                const pcmSttAudio = ulawToPcm(fullSttAudio);
+                const sttAudioPath = await soundManager.saveFinalAudio(
+                    pcmSttAudio,
+                    'stt',
+                    { uniqueId: mainChannel.id, callerId: mainChannel.caller.number },
+                    logger
+                );
+                callState.sttAudioPath = sttAudioPath;
+            }
 
             // Save interaction to DB before continuing. This is fire-and-forget.
             this.saveInteraction(callState);

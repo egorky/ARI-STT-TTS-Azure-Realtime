@@ -77,19 +77,28 @@ async function cleanupTempAudio(filePath, logger) {
 const RECORDINGS_DIR_NAME = 'recordings';
 
 /**
- * Saves the complete audio buffer to a permanent file in the recordings directory.
+ * Saves a complete audio buffer to a permanent file.
  * @param {Buffer} audioBuffer - The complete audio data.
- * @param {string} identifier - A unique identifier for the file, e.g., channel ID.
- * @returns {Promise<void>}
+ * @param {string} type - The type of audio ('tts' or 'stt').
+ * @param {object} metadata - Metadata for the filename.
+ * @param {string} metadata.uniqueId - The unique channel ID.
+ * @param {string} metadata.callerId - The caller's ID.
+ * @param {object} logger - The logger instance for the call.
+ * @returns {Promise<string|null>} The path to the saved file or null on error.
  */
-async function saveFinalAudio(audioBuffer, identifier, logger) {
-    const recordingsDir = path.join(process.cwd(), RECORDINGS_DIR_NAME);
+async function saveFinalAudio(audioBuffer, type, metadata, logger) {
+    const { uniqueId, callerId } = metadata;
+    const recordingsDir = path.join(process.cwd(), RECORDINGS_DIR_NAME, type);
     await fs.mkdir(recordingsDir, { recursive: true });
 
-    const filename = `${identifier}_${new Date().toISOString()}.wav`;
+    const timestamp = new Date().toISOString().replace(/:/g, '-');
+    const filename = `${uniqueId}_${callerId}_${timestamp}_${type}.wav`;
     const filePath = path.join(recordingsDir, filename);
 
     try {
+        // For STT audio, we receive raw u-law, so it needs conversion before adding a WAV header.
+        // For TTS, we already have PCM data from Azure.
+        // The conversion is handled in ari-client, so we assume PCM here.
         const wavOptions = {
             numChannels: 1,
             sampleRate: 8000,
@@ -97,10 +106,10 @@ async function saveFinalAudio(audioBuffer, identifier, logger) {
         };
         const wavBuffer = addWavHeader(audioBuffer, wavOptions);
         await fs.writeFile(filePath, wavBuffer);
-        (logger || globalLogger).info(`Saved full audio recording to ${filePath}`);
+        (logger || globalLogger).info(`Saved final audio to ${filePath}`);
         return filePath;
     } catch (err) {
-        (logger || globalLogger).error(`Failed to save final audio recording: ${filePath}`, err);
+        (logger || globalLogger).error(`Failed to save final audio to ${filePath}:`, err);
         return null;
     }
 }

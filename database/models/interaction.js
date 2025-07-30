@@ -22,6 +22,11 @@ module.exports = (sequelize, DataTypes) => {
         allowNull: true,
         comment: 'Path to the saved full audio file from TTS.'
     },
+        sttAudioPath: {
+            type: DataTypes.STRING,
+            allowNull: true,
+            comment: 'Path to the saved full audio file from user speech (STT).'
+        },
     recognitionMode: {
         type: DataTypes.ENUM('VOICE', 'DTMF', 'NO_INPUT', 'TIMEOUT', 'ERROR'),
         allowNull: false,
