@@ -77,7 +77,8 @@ class AzureService extends EventEmitter {
      * Audio should be pushed to the stream provided by the 'audioStreamReady' event.
      */
     startContinuousRecognition() {
-        this.sttPushStream = sdk.AudioInputStream.createPushStream();
+        const audioFormat = sdk.AudioStreamFormat.getWaveFormatPCM(8000, 16, 1);
+        this.sttPushStream = sdk.AudioInputStream.createPushStream(audioFormat);
         const audioConfig = sdk.AudioConfig.fromStreamInput(this.sttPushStream);
         this.sttRecognizer = new sdk.SpeechRecognizer(this.speechConfig, audioConfig);
 
