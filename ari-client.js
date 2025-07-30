@@ -7,7 +7,10 @@ const AzureService = require('./azure-service');
 const { ulawToPcm } = require('./audio-converter');
 const soundManager = require('./sound-manager');
 const config = require('./config');
-const logger = require('./logger');
+const createLogger = require('./logger');
+const db = require('../database');
+
+const logger = createLogger(); // Global logger for app-level events
 
 class App {
     constructor() {
@@ -26,18 +29,19 @@ class App {
             this.ariClient.on('StasisStart', (event, channel) => {
                 // Ignore channels that are part of an existing call setup (snoop/external)
                 if (this.isInternalChannel(channel.id)) {
-                    logger.info(`Ignoring internal channel ${channel.id} entering Stasis.`);
-                    // Simply answer and do nothing else.
-                    channel.answer().catch(err => logger.error(`Failed to answer internal channel ${channel.id}:`, err));
+                    // Use a temporary logger as we don't have full context yet
+                    createLogger().info(`Ignoring internal channel ${channel.id} entering Stasis.`);
+                    channel.answer().catch(err => createLogger().error(`Failed to answer internal channel ${channel.id}:`, err));
                     return;
                 }
                 this.handleCall(channel);
             });
 
             this.ariClient.on('StasisEnd', (event, channel) => {
-                if (this.activeCalls.has(channel.id)) {
-                    logger.info(`Main channel ${channel.id} left Stasis. Cleaning up associated resources.`);
-                    this.cleanup(this.activeCalls.get(channel.id));
+                const callState = this.activeCalls.get(channel.id);
+                if (callState) {
+                    callState.logger.info(`Main channel ${channel.id} left Stasis. Cleaning up associated resources.`);
+                    this.cleanup(callState);
                     this.activeCalls.delete(channel.id);
                 }
             });
@@ -56,8 +60,13 @@ class App {
     }
 
     async handleCall(channel) {
+        const callerId = channel.caller.number;
+        const uniqueId = channel.id.split('.')[0]; // Use the base ID for grouping
+        const logger = createLogger({ uniqueId, callerId });
+
         logger.info(`Incoming call on channel ${channel.id}`);
         const callState = {
+            logger,
             mainChannel: channel,
             userBridge: null,
             snoopChannel: null,
@@ -93,10 +102,12 @@ class App {
             await channel.answer();
             logger.info(`Channel ${channel.id} answered.`);
 
-            const textToSpeak = await channel.getChannelVar({ variable: 'TEXT_TO_SPEAK' });
-            if (!textToSpeak || !textToSpeak.value) {
+            const textToSpeakVar = await channel.getChannelVar({ variable: 'TEXT_TO_SPEAK' });
+            if (!textToSpeakVar || !textToSpeakVar.value) {
                 throw new Error('TEXT_TO_SPEAK variable not set on the channel.');
             }
+            const textToSpeak = textToSpeakVar.value;
+            callState.textToSynthesize = textToSpeak;
 
             // 1. Setup audio snooping
             await this.setupAudioSnooping(callState);
@@ -106,10 +117,10 @@ class App {
 
             // 4. The call will now wait until the user hangs up or recognition completes.
             // The logic continues in the StasisEnd handler or after recognitionPromise resolves.
-            logger.info(`Channel ${channel.id} is now in a listening state.`);
+            logger.info(`Channel is now in a listening state.`);
 
         } catch (err) {
-            logger.error(`Error handling call on channel ${channel.id}:`, err);
+            logger.error(`Error handling call:`, err);
             // The StasisEnd handler will trigger cleanup for this call
         }
     }
@@ -131,12 +142,12 @@ class App {
 
         this.azureService.once('recognitionEnded', (result) => {
             callState.finalTranscript = result.finalText;
-            logger.info(`Final transcript for ${callState.mainChannel.id}: ${result.finalText}`);
+            callState.logger.info(`Final transcript: ${result.finalText}`);
             recognitionResolve();
         });
 
         this.azureService.on('recognitionError', (err) => {
-            logger.error(`STT Error for ${callState.mainChannel.id}:`, err);
+            callState.logger.error(`STT Error:`, err);
             recognitionResolve(); // Resolve even on error to unblock the call flow
         });
 
@@ -150,7 +161,7 @@ class App {
         callState.userBridge = this.ariClient.Bridge();
         await callState.userBridge.create({ type: 'mixing' });
         await callState.userBridge.addChannel({ channel: mainChannel.id });
-        logger.info(`User bridge ${callState.userBridge.id} created for channel ${mainChannel.id}`);
+        callState.logger.info(`User bridge ${callState.userBridge.id} created.`);
 
         // Start RTP server
         callState.rtpServer = new RtpServer();
@@ -172,7 +183,7 @@ class App {
             spy: 'in'
         });
         this.internalChannelIds.add(callState.snoopChannel.id);
-        logger.info(`Snoop channel ${callState.snoopChannel.id} created for channel ${mainChannel.id}`);
+        callState.logger.info(`Snoop channel ${callState.snoopChannel.id} created.`);
 
         // Create external media channel
         callState.externalMediaChannel = await this.ariClient.channels.externalMedia({
@@ -181,17 +192,17 @@ class App {
             format: config.rtpServer.audioFormat,
         });
         this.internalChannelIds.add(callState.externalMediaChannel.id);
-        logger.info(`External media channel ${callState.externalMediaChannel.id} created.`);
+        callState.logger.info(`External media channel ${callState.externalMediaChannel.id} created.`);
 
         // Create snoop bridge and bridge channels
         callState.snoopBridge = this.ariClient.Bridge();
         await callState.snoopBridge.create({ type: 'mixing' });
         await callState.snoopBridge.addChannel({ channel: [callState.snoopChannel.id, callState.externalMediaChannel.id] });
-        logger.info(`Snoop bridge ${callState.snoopBridge.id} created.`);
+        callState.logger.info(`Snoop bridge ${callState.snoopBridge.id} created.`);
     }
 
     async playTtsAudio(callState, text) {
-        const { mainChannel, userBridge } = callState;
+        const { mainChannel, userBridge, logger } = callState;
         callState.isPlayingPrompt = true;
 
         try {
@@ -225,20 +236,20 @@ class App {
                 const chunk = chunkQueue.shift();
 
                 try {
-                    const tempAudioFile = await soundManager.saveTempAudio(chunk);
-                    logger.info(`Queueing chunk ${tempAudioFile.filePath} for playback.`);
+                    const tempAudioFile = await soundManager.saveTempAudio(chunk, callState.logger);
+                    callState.logger.info(`Queueing chunk ${tempAudioFile.filePath} for playback.`);
 
                     const playback = this.ariClient.Playback();
                     playback.once('PlaybackFinished', () => {
-                        logger.info(`Finished playing chunk ${tempAudioFile.filePath}.`);
-                        soundManager.cleanupTempAudio(tempAudioFile.filePath); // Fire-and-forget
+                        callState.logger.info(`Finished playing chunk ${tempAudioFile.filePath}.`);
+                        soundManager.cleanupTempAudio(tempAudioFile.filePath, callState.logger); // Fire-and-forget
                         processing = false;
                         processQueue(); // Process next chunk
                     });
 
                     await userBridge.play({ media: tempAudioFile.soundUri, playbackId: playback.id });
                 } catch (err) {
-                    logger.error('Error processing TTS audio chunk:', err);
+                    callState.logger.error('Error processing TTS audio chunk:', err);
                     processing = false;
                 }
             };
@@ -252,7 +263,7 @@ class App {
             });
 
             ttsAudioStream.on('end', () => {
-                logger.info('TTS stream from Azure has ended.');
+                callState.logger.info('TTS stream from Azure has ended.');
                 streamFinished = true;
                 if (!processing && chunkQueue.length === 0) {
                     resolveStreamEnd();
@@ -260,7 +271,7 @@ class App {
             });
 
             await streamEndPromise;
-            logger.info(`All TTS chunks have been played for channel ${mainChannel.id}.`);
+            logger.info(`All TTS chunks have been played.`);
 
             if (config.app.vad.activationMode === 'after_prompt_end') {
                 this.enableTalkDetection(callState);
@@ -268,10 +279,11 @@ class App {
 
             // Save the full audio file
             const fullAudioBuffer = Buffer.concat(allChunks);
-            await soundManager.saveFinalAudio(fullAudioBuffer, mainChannel.id);
+            const finalAudioPath = await soundManager.saveFinalAudio(fullAudioBuffer, mainChannel.id, logger);
+            callState.synthesizedAudioPath = finalAudioPath;
 
         } catch (err) {
-            logger.error(`Error during TTS streaming playback for channel ${mainChannel.id}:`, err);
+            logger.error(`Error during TTS streaming playback:`, err);
         } finally {
             callState.isPlayingPrompt = false;
             logger.info('Finished playing prompt.');
@@ -279,8 +291,8 @@ class App {
     }
 
     enableTalkDetection(callState) {
-        const { mainChannel, userBridge, rtpServer } = callState;
-        logger.info(`Enabling talk detection on channel ${mainChannel.id}`);
+        const { mainChannel, userBridge, rtpServer, logger } = callState;
+        logger.info(`Enabling talk detection.`);
 
         // Start pre-buffering audio to catch the beginning of speech
         rtpServer.startPreBuffering(config.rtpServer.preBufferSize);
@@ -288,7 +300,7 @@ class App {
         // Start no-input timer
         if (config.app.timeouts.noInput > 0) {
             callState.timers.noInput = setTimeout(() => {
-                logger.warn(`No-input timeout reached for channel ${mainChannel.id}. Hanging up.`);
+                logger.warn(`No-input timeout reached. Hanging up.`);
                 mainChannel.hangup().catch(e => logger.error(`Error hanging up channel on no-input timeout:`, e));
             }, config.app.timeouts.noInput);
         }
@@ -314,7 +326,7 @@ class App {
                 }
             }
 
-            logger.info(`Talking started on ${mainChannel.id}. Starting recognition session with Azure.`);
+            logger.info(`Talking started. Starting recognition session with Azure.`);
 
             // Stop pre-buffering and get the buffered audio
             const preBufferedAudio = rtpServer.stopPreBufferingAndFlush();
@@ -338,7 +350,7 @@ class App {
 
         const onTalkingFinished = (event) => {
              if (callState.isRecognizing) { // Only act if we were actively recognizing
-                logger.info(`Talking finished on ${mainChannel.id}. Duration: ${event.duration} ms. Stopping recognition stream.`);
+                logger.info(`Talking finished. Duration: ${event.duration} ms. Stopping recognition stream.`);
                 callState.isRecognizing = false;
                 if (this.azureService) {
                     this.azureService.stopContinuousRecognition();
@@ -397,24 +409,47 @@ class App {
             variable: 'TALK_DETECT(set)',
             value: talkDetectValue
         }).catch(err => {
-            logger.error(`Failed to set TALK_DETECT on channel ${mainChannel.id}:`, err);
+            logger.error(`Failed to set TALK_DETECT:`, err);
         });
     }
 
+    async saveInteraction(callState) {
+        const { logger, mainChannel, textToSynthesize, synthesizedAudioPath, recognitionMode, finalTranscript, dtmfDigits } = callState;
+        try {
+            await db.Interaction.create({
+                uniqueId: mainChannel.id.split('.')[0],
+                callerId: mainChannel.caller.number,
+                textToSynthesize,
+                synthesizedAudioPath,
+                recognitionMode,
+                transcript: finalTranscript,
+                dtmfResult: dtmfDigits,
+            });
+            logger.info('Interaction saved to database.');
+        } catch (dbError) {
+            logger.error('Failed to save interaction to database:', dbError);
+        }
+    }
+
     async continueInDialplan(callState) {
-        if (callState && callState.mainChannel) {
-            logger.info(`Continuing in dialplan for channel ${callState.mainChannel.id}`);
+        const { mainChannel, logger } = callState;
+        if (callState && mainChannel) {
+
+            // Save interaction to DB before continuing. This is fire-and-forget.
+            this.saveInteraction(callState);
+
+            logger.info(`Continuing in dialplan.`);
             try {
                 if (callState.recognitionMode === 'dtmf') {
-                    await callState.mainChannel.setChannelVar({ variable: 'DTMF_RESULT', value: callState.dtmfDigits });
-                    await callState.mainChannel.setChannelVar({ variable: 'RECOGNITION_MODE', value: 'DTMF' });
+                    await mainChannel.setChannelVar({ variable: 'DTMF_RESULT', value: callState.dtmfDigits });
+                    await mainChannel.setChannelVar({ variable: 'RECOGNITION_MODE', value: 'DTMF' });
                 } else {
-                    await callState.mainChannel.setChannelVar({ variable: 'TRANSCRIPT', value: callState.finalTranscript });
-                    await callState.mainChannel.setChannelVar({ variable: 'RECOGNITION_MODE', value: 'VOICE' });
+                    await mainChannel.setChannelVar({ variable: 'TRANSCRIPT', value: callState.finalTranscript });
+                    await mainChannel.setChannelVar({ variable: 'RECOGNITION_MODE', value: 'VOICE' });
                 }
-                await callState.mainChannel.continueInDialplan();
+                await mainChannel.continueInDialplan();
             } catch (err) {
-                 logger.error(`Error continuing in dialplan for ${callState.mainChannel.id}:`, err);
+                 logger.error(`Error continuing in dialplan:`, err);
             }
         }
         // Cleanup will be handled by StasisEnd
@@ -422,7 +457,8 @@ class App {
 
     async cleanup(callState) {
         if (!callState) return;
-        logger.info(`Cleaning up resources for main channel ${callState.mainChannel.id}...`);
+        const { logger } = callState;
+        logger.info(`Cleaning up resources...`);
 
         // Clear all timers
         clearTimeout(callState.timers.session);

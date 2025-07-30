@@ -52,6 +52,18 @@ const config = {
         port: parseInt(process.env.EXTERNAL_MEDIA_SERVER_PORT, 10) || 16000,
         audioFormat: process.env.EXTERNAL_MEDIA_AUDIO_FORMAT || 'ulaw',
         preBufferSize: parseInt(process.env.RTP_PREBUFFER_SIZE, 10) || 100,
+    },
+    logging: {
+        level: process.env.LOG_LEVEL || 'info',
+    },
+    database: {
+        dialect: process.env.DB_DIALECT || 'sqlite',
+        storage: process.env.DB_STORAGE || './database/dev.sqlite', // For sqlite
+        host: process.env.DB_HOST,
+        port: process.env.DB_PORT,
+        username: process.env.DB_USER,
+        password: process.env.DB_PASSWORD,
+        database: process.env.DB_DATABASE,
     }
 };
 

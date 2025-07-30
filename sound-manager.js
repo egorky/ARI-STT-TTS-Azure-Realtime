@@ -4,8 +4,9 @@ const fs = require('fs').promises;
 const path = require('path');
 const os = require('os');
 const { v4: uuidv4 } = require('uuid');
-const logger = require('./logger');
+const createLogger = require('./logger');
 
+const globalLogger = createLogger();
 const TEMP_DIR_NAME = 'ari-tts-cache';
 const tempDir = path.join(os.tmpdir(), TEMP_DIR_NAME);
 
@@ -16,9 +17,9 @@ const tempDir = path.join(os.tmpdir(), TEMP_DIR_NAME);
 async function initialize() {
     try {
         await fs.mkdir(tempDir, { recursive: true });
-        logger.info(`Temporary audio directory is ready at: ${tempDir}`);
+        globalLogger.info(`Temporary audio directory is ready at: ${tempDir}`);
     } catch (err) {
-        logger.error('Failed to create temporary audio directory:', err);
+        globalLogger.error('Failed to create temporary audio directory:', err);
         throw err;
     }
 }
@@ -31,7 +32,7 @@ const { addWavHeader } = require('./wav-helper');
  * @param {Buffer} pcmAudioBuffer - The raw PCM audio data.
  * @returns {Promise<object>} A promise that resolves with an object containing the full path and the sound URI.
  */
-async function saveTempAudio(pcmAudioBuffer) {
+async function saveTempAudio(pcmAudioBuffer, logger) {
     const filename = `${uuidv4()}.wav`;
     const filePath = path.join(tempDir, filename);
 
@@ -51,7 +52,7 @@ async function saveTempAudio(pcmAudioBuffer) {
 
         return { filePath, soundUri };
     } catch (err) {
-        logger.error(`Failed to save temporary audio file: ${filePath}`, err);
+        (logger || globalLogger).error(`Failed to save temporary audio file: ${filePath}`, err);
         throw err;
     }
 }
@@ -61,7 +62,7 @@ async function saveTempAudio(pcmAudioBuffer) {
  * @param {string} filePath - The full path to the file to delete.
  * @returns {Promise<void>}
  */
-async function cleanupTempAudio(filePath) {
+async function cleanupTempAudio(filePath, logger) {
     if (!filePath) return;
     try {
         await fs.unlink(filePath);
@@ -81,7 +82,7 @@ const RECORDINGS_DIR_NAME = 'recordings';
  * @param {string} identifier - A unique identifier for the file, e.g., channel ID.
  * @returns {Promise<void>}
  */
-async function saveFinalAudio(audioBuffer, identifier) {
+async function saveFinalAudio(audioBuffer, identifier, logger) {
     const recordingsDir = path.join(process.cwd(), RECORDINGS_DIR_NAME);
     await fs.mkdir(recordingsDir, { recursive: true });
 
@@ -96,9 +97,11 @@ async function saveFinalAudio(audioBuffer, identifier) {
         };
         const wavBuffer = addWavHeader(audioBuffer, wavOptions);
         await fs.writeFile(filePath, wavBuffer);
-        logger.info(`Saved full audio recording to ${filePath}`);
+        (logger || globalLogger).info(`Saved full audio recording to ${filePath}`);
+        return filePath;
     } catch (err) {
-        logger.error(`Failed to save final audio recording: ${filePath}`, err);
+        (logger || globalLogger).error(`Failed to save final audio recording: ${filePath}`, err);
+        return null;
     }
 }
 

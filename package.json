@@ -21,6 +21,9 @@
     "microsoft-cognitiveservices-speech-sdk": "1.35.0",
     "dotenv": "^16.4.5",
     "g711": "^1.0.1",
-    "uuid": "^9.0.1"
+    "uuid": "^9.0.1",
+    "sequelize": "^6.37.3",
+    "sqlite3": "^5.1.7",
+    "mysql2": "^3.10.1"
   }
 }

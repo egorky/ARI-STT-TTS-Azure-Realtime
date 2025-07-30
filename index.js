@@ -6,12 +6,18 @@ require('./config');
 const logger = require('./logger');
 const App = require('./ari-client');
 
+const db = require('./database');
 const app = new App();
 
-app.start().catch(err => {
-    logger.error("Application failed to start:", err);
-    process.exit(1);
-});
+db.sequelize.sync({ force: false }) // Use { force: true } to drop and re-create tables on startup
+    .then(() => {
+        logger.info('Database synchronized.');
+        return app.start();
+    })
+    .catch(err => {
+        logger.error("Application failed to start:", err);
+        process.exit(1);
+    });
 
 // Graceful shutdown
 process.on('SIGINT', () => {
