@@ -15,7 +15,7 @@ const logger = createLogger(); // Global logger for app-level events
 class App {
     constructor() {
         this.ariClient = null;
-        this.azureService = new AzureService(config);
+        // this.azureService is no longer global
         this.activeCalls = new Map(); // Track active calls by channel ID
         this.internalChannelIds = new Set(); // Track all channels created by the app
     }
@@ -68,6 +68,7 @@ class App {
         const callState = {
             logger,
             mainChannel: channel,
+            azureService: new AzureService(config, logger),
             userBridge: null,
             snoopChannel: null,
             snoopBridge: null,
@@ -126,28 +127,29 @@ class App {
     }
 
     setupStt(callState) {
+        const { azureService, logger } = callState;
         let recognitionResolve;
         callState.recognitionPromise = new Promise(resolve => {
             recognitionResolve = resolve;
         });
 
         const streamReadyPromise = new Promise(resolve => {
-            this.azureService.once('audioStreamReady', (pushStream) => {
+            azureService.once('audioStreamReady', (pushStream) => {
                 callState.sttPushStream = pushStream;
                 resolve(pushStream);
             });
         });
 
-        this.azureService.startContinuousRecognition();
+        azureService.startContinuousRecognition();
 
-        this.azureService.once('recognitionEnded', (result) => {
+        azureService.once('recognitionEnded', (result) => {
             callState.finalTranscript = result.finalText;
-            callState.logger.info(`Final transcript: ${result.finalText}`);
+            logger.info(`Final transcript: ${result.finalText}`);
             recognitionResolve();
         });
 
-        this.azureService.on('recognitionError', (err) => {
-            callState.logger.error(`STT Error:`, err);
+        azureService.on('recognitionError', (err) => {
+            logger.error(`STT Error:`, err);
             recognitionResolve(); // Resolve even on error to unblock the call flow
         });
 
@@ -164,7 +166,7 @@ class App {
         callState.logger.info(`User bridge ${callState.userBridge.id} created.`);
 
         // Start RTP server
-        callState.rtpServer = new RtpServer();
+        callState.rtpServer = new RtpServer(callState.logger);
         const rtpServerAddress = await callState.rtpServer.listen(config.rtpServer.ip, config.rtpServer.port);
 
         callState.rtpServer.on('audioPacket', (audio) => {
@@ -202,11 +204,11 @@ class App {
     }
 
     async playTtsAudio(callState, text) {
-        const { mainChannel, userBridge, logger } = callState;
+        const { mainChannel, userBridge, logger, azureService } = callState;
         callState.isPlayingPrompt = true;
 
         try {
-            const ttsAudioStream = await this.azureService.synthesizeText(text);
+            const ttsAudioStream = await azureService.synthesizeText(text);
 
             let resolveStreamEnd;
             const streamEndPromise = new Promise(resolve => {
@@ -352,8 +354,8 @@ class App {
              if (callState.isRecognizing) { // Only act if we were actively recognizing
                 logger.info(`Talking finished. Duration: ${event.duration} ms. Stopping recognition stream.`);
                 callState.isRecognizing = false;
-                if (this.azureService) {
-                    this.azureService.stopContinuousRecognition();
+                if (callState.azureService) {
+                    callState.azureService.stopContinuousRecognition();
                 }
             }
         };
@@ -368,7 +370,7 @@ class App {
                 clearTimeout(callState.timers.noInput);
                 mainChannel.removeListener('ChannelTalkingStarted', onTalkingStarted);
                 if (callState.isRecognizing) {
-                    this.azureService.stopContinuousRecognition();
+                    callState.azureService.stopContinuousRecognition();
                     callState.isRecognizing = false;
                 }
 
@@ -485,8 +487,8 @@ class App {
         if (callState.rtpServer) {
             callState.rtpServer.close();
         }
-        if (this.azureService) {
-            this.azureService.stopContinuousRecognition();
+        if (callState.azureService) {
+            callState.azureService.stopContinuousRecognition();
         }
     }
 }

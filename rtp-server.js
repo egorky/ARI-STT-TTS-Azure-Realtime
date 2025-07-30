@@ -4,7 +4,7 @@ const dgram = require('dgram');
 const EventEmitter = require('events');
 const createLogger = require('./logger');
 
-const logger = createLogger(); // Global logger for this module
+const globalLogger = createLogger(); // Fallback logger
 
 /**
  * A simple RTP server to receive audio streams from Asterisk.
@@ -12,13 +12,14 @@ const logger = createLogger(); // Global logger for this module
  * and emits it.
  */
 class RtpServer extends EventEmitter {
-    constructor() {
+    constructor(logger) {
         super();
+        this.logger = logger || globalLogger;
         this.socket = dgram.createSocket('udp4');
         this.address = null;
 
         this.socket.on('error', (err) => {
-            logger.error(`RTP Server Error:\n${err.stack}`);
+            this.logger.error(`RTP Server Error:\n${err.stack}`);
             this.socket.close();
             this.emit('error', err);
         });
@@ -53,7 +54,7 @@ class RtpServer extends EventEmitter {
 
         this.socket.on('listening', () => {
             this.address = this.socket.address();
-            logger.info(`RTP Server listening on ${this.address.address}:${this.address.port}`);
+            this.logger.info(`RTP Server listening on ${this.address.address}:${this.address.port}`);
             this.emit('listening', this.address);
         });
     }
@@ -75,7 +76,7 @@ class RtpServer extends EventEmitter {
 
                 const onError = (err) => {
                     if (err.code === 'EADDRINUSE') {
-                        logger.warn(`Port ${port} is in use, trying next one.`);
+                        this.logger.warn(`Port ${port} is in use, trying next one.`);
                         this.socket.close();
                         this.socket = dgram.createSocket('udp4'); // Re-create socket
                         tryBind(port + 1); // Try the next port
@@ -133,7 +134,7 @@ class RtpServer extends EventEmitter {
                     })[0];
 
                     if (nextAvailableSeq !== undefined) {
-                        logger.warn(`RTP packet ${nextSeq} lost. Skipping to next available packet ${nextAvailableSeq}.`);
+                        this.logger.warn(`RTP packet ${nextSeq} lost. Skipping to next available packet ${nextAvailableSeq}.`);
                         this.lastPlayedSeq = nextAvailableSeq - 1;
                     }
                     missCount = 0;
@@ -143,14 +144,14 @@ class RtpServer extends EventEmitter {
     }
 
     startPreBuffering(bufferSize) {
-        logger.info(`Starting RTP pre-buffering with size ${bufferSize}`);
+        this.logger.info(`Starting RTP pre-buffering with size ${bufferSize}`);
         this.preBufferSize = bufferSize;
         this.preBuffer = [];
         this.isPreBuffering = true;
     }
 
     stopPreBufferingAndFlush() {
-        logger.info(`Stopping RTP pre-buffering and flushing ${this.preBuffer.length} packets.`);
+        this.logger.info(`Stopping RTP pre-buffering and flushing ${this.preBuffer.length} packets.`);
         this.isPreBuffering = false;
         const flushedAudio = Buffer.concat(this.preBuffer);
         this.preBuffer = [];
@@ -163,7 +164,7 @@ class RtpServer extends EventEmitter {
         }
         if (this.socket) {
             this.socket.close();
-            logger.info('RTP Server stopped.');
+            this.logger.info('RTP Server stopped.');
         }
     }
 }

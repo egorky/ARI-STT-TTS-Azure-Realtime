@@ -5,15 +5,14 @@ const EventEmitter = require('events');
 const { PassThrough } = require('stream');
 const createLogger = require('./logger');
 
-const logger = createLogger(); // Global logger for this module
-
 /**
  * Manages interactions with Azure Speech Services for both
  * Text-to-Speech (TTS) and Speech-to-Text (STT).
  */
 class AzureService extends EventEmitter {
-    constructor(config) {
+    constructor(config, logger) {
         super();
+        this.logger = logger || createLogger();
         this.speechConfig = sdk.SpeechConfig.fromSubscription(config.azure.subscriptionKey, config.azure.region);
 
         // TTS Configuration
@@ -55,15 +54,15 @@ class AzureService extends EventEmitter {
                 text,
                 result => {
                     if (result.reason === sdk.ResultReason.SynthesizingAudioCompleted) {
-                        logger.info("Azure TTS synthesis completed.");
+                        this.logger.info("Azure TTS synthesis completed.");
                     } else {
-                        logger.error(`Azure TTS synthesis failed: ${result.errorDetails}`);
+                        this.logger.error(`Azure TTS synthesis failed: ${result.errorDetails}`);
                         audioStream.emit('error', new Error(result.errorDetails));
                     }
                     synthesizer.close();
                 },
                 err => {
-                    logger.error(`Azure TTS synthesis error: ${err}`);
+                    this.logger.error(`Azure TTS synthesis error: ${err}`);
                     audioStream.emit('error', err);
                     synthesizer.close();
                     reject(err);
@@ -87,13 +86,13 @@ class AzureService extends EventEmitter {
         let recognizedText = '';
 
         this.sttRecognizer.recognizing = (s, e) => {
-            logger.info(`Azure STT Intermediate result: ${e.result.text}`);
+            this.logger.info(`Azure STT Intermediate result: ${e.result.text}`);
             this.emit('recognizing', { text: e.result.text });
         };
 
         this.sttRecognizer.recognized = (s, e) => {
             if (e.result.reason === sdk.ResultReason.RecognizedSpeech) {
-                logger.info(`Azure STT Final result: ${e.result.text}`);
+                this.logger.info(`Azure STT Final result: ${e.result.text}`);
                 if (e.result.text) {
                     recognizedText += e.result.text + ' ';
                 }
@@ -101,27 +100,27 @@ class AzureService extends EventEmitter {
         };
 
         this.sttRecognizer.canceled = (s, e) => {
-            logger.error(`Azure STT Canceled: ${e.reason}`);
+            this.logger.error(`Azure STT Canceled: ${e.reason}`);
             if (e.reason === sdk.CancellationReason.Error) {
-                logger.error(`Cancellation Details: ${e.errorDetails}`);
+                this.logger.error(`Cancellation Details: ${e.errorDetails}`);
             }
             this.emit('recognitionError', new Error(e.errorDetails));
             this.stopContinuousRecognition();
         };
 
         this.sttRecognizer.sessionStopped = (s, e) => {
-            logger.info("Azure STT session stopped.");
+            this.logger.info("Azure STT session stopped.");
             this.emit('recognitionEnded', { finalText: recognizedText.trim() });
             this.stopContinuousRecognition();
         };
 
         this.sttRecognizer.startContinuousRecognitionAsync(
             () => {
-                logger.info("Azure STT continuous recognition started.");
+                this.logger.info("Azure STT continuous recognition started.");
                 this.emit('audioStreamReady', this.sttPushStream);
             },
             (err) => {
-                logger.error(`Error starting Azure STT recognition: ${err}`);
+                this.logger.error(`Error starting Azure STT recognition: ${err}`);
                 this.emit('recognitionError', new Error(err));
             }
         );
