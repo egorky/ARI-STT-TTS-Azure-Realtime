@@ -7,6 +7,7 @@ const AzureService = require('./azure-service');
 const { ulawToPcm } = require('./audio-converter');
 const soundManager = require('./sound-manager');
 const config = require('./config');
+const logger = require('./logger');
 
 class App {
     constructor() {
@@ -20,14 +21,14 @@ class App {
         try {
             await soundManager.initialize();
             this.ariClient = await AriClient.connect(config.ari.url, config.ari.username, config.ari.password);
-            console.log('Connected to Asterisk ARI');
+            logger.info('Connected to Asterisk ARI');
 
             this.ariClient.on('StasisStart', (event, channel) => {
                 // Ignore channels that are part of an existing call setup (snoop/external)
                 if (this.isInternalChannel(channel.id)) {
-                    console.log(`Ignoring internal channel ${channel.id} entering Stasis.`);
+                    logger.info(`Ignoring internal channel ${channel.id} entering Stasis.`);
                     // Simply answer and do nothing else.
-                    channel.answer().catch(err => console.error(`Failed to answer internal channel ${channel.id}:`, err));
+                    channel.answer().catch(err => logger.error(`Failed to answer internal channel ${channel.id}:`, err));
                     return;
                 }
                 this.handleCall(channel);
@@ -35,17 +36,17 @@ class App {
 
             this.ariClient.on('StasisEnd', (event, channel) => {
                 if (this.activeCalls.has(channel.id)) {
-                    console.log(`Main channel ${channel.id} left Stasis. Cleaning up associated resources.`);
+                    logger.info(`Main channel ${channel.id} left Stasis. Cleaning up associated resources.`);
                     this.cleanup(this.activeCalls.get(channel.id));
                     this.activeCalls.delete(channel.id);
                 }
             });
 
             this.ariClient.start(config.ari.appName);
-            console.log(`ARI application '${config.ari.appName}' started.`);
+            logger.info(`ARI application '${config.ari.appName}' started.`);
 
         } catch (err) {
-            console.error('Failed to connect or start ARI client:', err);
+            logger.error('Failed to connect or start ARI client:', err);
             process.exit(1);
         }
     }
@@ -55,7 +56,7 @@ class App {
     }
 
     async handleCall(channel) {
-        console.log(`Incoming call on channel ${channel.id}`);
+        logger.info(`Incoming call on channel ${channel.id}`);
         const callState = {
             mainChannel: channel,
             userBridge: null,
@@ -74,7 +75,7 @@ class App {
 
         try {
             await channel.answer();
-            console.log(`Channel ${channel.id} answered.`);
+            logger.info(`Channel ${channel.id} answered.`);
 
             const textToSpeak = await channel.getChannelVar({ variable: 'TEXT_TO_SPEAK' });
             if (!textToSpeak || !textToSpeak.value) {
@@ -92,14 +93,14 @@ class App {
             this.enableTalkDetection(callState); // Enable immediately after playback
 
             // 4. Wait for the recognition to complete
-            console.log(`Channel ${channel.id} is now waiting for speech recognition to complete.`);
+            logger.info(`Channel ${channel.id} is now waiting for speech recognition to complete.`);
             await callState.recognitionPromise;
 
             // 5. Continue in dialplan
             await this.continueInDialplan(callState);
 
         } catch (err) {
-            console.error(`Error handling call on channel ${channel.id}:`, err);
+            logger.error(`Error handling call on channel ${channel.id}:`, err);
             // The StasisEnd handler will trigger cleanup for this call
         }
     }
@@ -118,12 +119,12 @@ class App {
 
         this.azureService.once('recognitionEnded', (result) => {
             callState.finalTranscript = result.finalText;
-            console.log(`Final transcript for ${callState.mainChannel.id}: ${result.finalText}`);
+            logger.info(`Final transcript for ${callState.mainChannel.id}: ${result.finalText}`);
             recognitionResolve();
         });
 
         this.azureService.on('recognitionError', (err) => {
-            console.error(`STT Error for ${callState.mainChannel.id}:`, err);
+            logger.error(`STT Error for ${callState.mainChannel.id}:`, err);
             recognitionResolve(); // Resolve even on error to unblock the call flow
         });
     }
@@ -135,7 +136,7 @@ class App {
         callState.userBridge = this.ariClient.Bridge();
         await callState.userBridge.create({ type: 'mixing' });
         await callState.userBridge.addChannel({ channel: mainChannel.id });
-        console.log(`User bridge ${callState.userBridge.id} created for channel ${mainChannel.id}`);
+        logger.info(`User bridge ${callState.userBridge.id} created for channel ${mainChannel.id}`);
 
         // Start RTP server
         callState.rtpServer = new RtpServer();
@@ -157,7 +158,7 @@ class App {
             spy: 'in'
         });
         this.internalChannelIds.add(callState.snoopChannel.id);
-        console.log(`Snoop channel ${callState.snoopChannel.id} created for channel ${mainChannel.id}`);
+        logger.info(`Snoop channel ${callState.snoopChannel.id} created for channel ${mainChannel.id}`);
 
         // Create external media channel
         callState.externalMediaChannel = await this.ariClient.channels.externalMedia({
@@ -166,13 +167,13 @@ class App {
             format: config.rtpServer.audioFormat,
         });
         this.internalChannelIds.add(callState.externalMediaChannel.id);
-        console.log(`External media channel ${callState.externalMediaChannel.id} created.`);
+        logger.info(`External media channel ${callState.externalMediaChannel.id} created.`);
 
         // Create snoop bridge and bridge channels
         callState.snoopBridge = this.ariClient.Bridge();
         await callState.snoopBridge.create({ type: 'mixing' });
         await callState.snoopBridge.addChannel({ channel: [callState.snoopChannel.id, callState.externalMediaChannel.id] });
-        console.log(`Snoop bridge ${callState.snoopBridge.id} created.`);
+        logger.info(`Snoop bridge ${callState.snoopBridge.id} created.`);
     }
 
     async playTtsAudio(callState, text) {
@@ -191,7 +192,7 @@ class App {
 
             tempAudioFile = await soundManager.saveTempAudio(audioBuffer);
 
-            console.log(`Playing temporary audio file ${tempAudioFile.filePath} to channel ${mainChannel.id}`);
+            logger.info(`Playing temporary audio file ${tempAudioFile.filePath} to channel ${mainChannel.id}`);
 
             callState.playback = this.ariClient.Playback();
             const playbackFinished = new Promise(resolve => {
@@ -201,9 +202,9 @@ class App {
 
             await userBridge.play({ media: tempAudioFile.soundUri, playbackId: callState.playback.id });
 
-            console.log(`Playback started on channel ${mainChannel.id}`);
+            logger.info(`Playback started on channel ${mainChannel.id}`);
             await playbackFinished;
-            console.log(`Playback finished on channel ${mainChannel.id}`);
+            logger.info(`Playback finished on channel ${mainChannel.id}`);
 
         } finally {
             if (tempAudioFile) {
@@ -214,15 +215,15 @@ class App {
 
     enableTalkDetection(callState) {
         const { mainChannel } = callState;
-        console.log(`Enabling talk detection on channel ${mainChannel.id}`);
+        logger.info(`Enabling talk detection on channel ${mainChannel.id}`);
 
         mainChannel.on('ChannelTalkingStarted', () => {
-            console.log(`Talking started on ${mainChannel.id}. Starting recognition.`);
+            logger.info(`Talking started on ${mainChannel.id}. Starting recognition.`);
             callState.isRecognizing = true;
         });
 
         mainChannel.on('ChannelTalkingFinished', (event) => {
-            console.log(`Talking finished on ${mainChannel.id}. Duration: ${event.duration} ms. Stopping recognition stream.`);
+            logger.info(`Talking finished on ${mainChannel.id}. Duration: ${event.duration} ms. Stopping recognition stream.`);
             callState.isRecognizing = false;
 
             // Explicitly signal to the Azure SDK that the audio stream is finished.
@@ -240,18 +241,18 @@ class App {
             variable: 'TALK_DETECT(set)',
             value: talkDetectValue
         }).catch(err => {
-            console.error(`Failed to set TALK_DETECT on channel ${mainChannel.id}:`, err);
+            logger.error(`Failed to set TALK_DETECT on channel ${mainChannel.id}:`, err);
         });
     }
 
     async continueInDialplan(callState) {
         if (callState && callState.mainChannel) {
-            console.log(`Continuing in dialplan for channel ${callState.mainChannel.id}`);
+            logger.info(`Continuing in dialplan for channel ${callState.mainChannel.id}`);
             try {
                 await callState.mainChannel.setChannelVar({ variable: 'TRANSCRIPT', value: callState.finalTranscript });
                 await callState.mainChannel.continueInDialplan();
             } catch (err) {
-                 console.error(`Error continuing in dialplan for ${callState.mainChannel.id}:`, err);
+                 logger.error(`Error continuing in dialplan for ${callState.mainChannel.id}:`, err);
             }
         }
         // Cleanup will be handled by StasisEnd
@@ -259,7 +260,7 @@ class App {
 
     async cleanup(callState) {
         if (!callState) return;
-        console.log(`Cleaning up resources for main channel ${callState.mainChannel.id}...`);
+        logger.info(`Cleaning up resources for main channel ${callState.mainChannel.id}...`);
 
         // Remove listeners
         callState.mainChannel.removeAllListeners('ChannelTalkingStarted');

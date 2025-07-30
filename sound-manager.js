@@ -4,6 +4,7 @@ const fs = require('fs').promises;
 const path = require('path');
 const os = require('os');
 const { v4: uuidv4 } = require('uuid');
+const logger = require('./logger');
 
 const TEMP_DIR_NAME = 'ari-tts-cache';
 const tempDir = path.join(os.tmpdir(), TEMP_DIR_NAME);
@@ -15,9 +16,9 @@ const tempDir = path.join(os.tmpdir(), TEMP_DIR_NAME);
 async function initialize() {
     try {
         await fs.mkdir(tempDir, { recursive: true });
-        console.log(`Temporary audio directory is ready at: ${tempDir}`);
+        logger.info(`Temporary audio directory is ready at: ${tempDir}`);
     } catch (err) {
-        console.error('Failed to create temporary audio directory:', err);
+        logger.error('Failed to create temporary audio directory:', err);
         throw err;
     }
 }
@@ -50,7 +51,7 @@ async function saveTempAudio(pcmAudioBuffer) {
 
         return { filePath, soundUri };
     } catch (err) {
-        console.error(`Failed to save temporary audio file: ${filePath}`, err);
+        logger.error(`Failed to save temporary audio file: ${filePath}`, err);
         throw err;
     }
 }
@@ -67,7 +68,7 @@ async function cleanupTempAudio(filePath) {
     } catch (err) {
         // Ignore errors if file doesn't exist, but log others.
         if (err.code !== 'ENOENT') {
-            console.error(`Failed to clean up temporary audio file: ${filePath}`, err);
+            logger.error(`Failed to clean up temporary audio file: ${filePath}`, err);
         }
     }
 }
