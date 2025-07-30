@@ -117,11 +117,14 @@ class App {
             recognitionResolve = resolve;
         });
 
-        this.azureService.startContinuousRecognition();
-
-        this.azureService.once('audioStreamReady', (pushStream) => {
-            callState.sttPushStream = pushStream;
+        const streamReadyPromise = new Promise(resolve => {
+            this.azureService.once('audioStreamReady', (pushStream) => {
+                callState.sttPushStream = pushStream;
+                resolve(pushStream);
+            });
         });
+
+        this.azureService.startContinuousRecognition();
 
         this.azureService.once('recognitionEnded', (result) => {
             callState.finalTranscript = result.finalText;
@@ -133,6 +136,8 @@ class App {
             logger.error(`STT Error for ${callState.mainChannel.id}:`, err);
             recognitionResolve(); // Resolve even on error to unblock the call flow
         });
+
+        return streamReadyPromise;
     }
 
     async setupAudioSnooping(callState) {
@@ -311,13 +316,13 @@ class App {
             // Stop pre-buffering and get the buffered audio
             const preBufferedAudio = rtpServer.stopPreBufferingAndFlush();
 
-            // Start the STT service and get the stream to push to
-            this.setupStt(callState);
+            // Start the STT service and wait for the push stream to be ready
+            const pushStream = await this.setupStt(callState);
 
             // Push the pre-buffered audio first
             if (preBufferedAudio.length > 0) {
                 const pcmPreBufferedAudio = ulawToPcm(preBufferedAudio);
-                callState.sttPushStream.write(pcmPreBufferedAudio);
+                pushStream.write(pcmPreBufferedAudio);
                 logger.info(`Pushed ${preBufferedAudio.length} bytes of pre-buffered audio to Azure.`);
             }
 
