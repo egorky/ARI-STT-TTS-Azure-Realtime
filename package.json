@@ -1,0 +1,26 @@
+{
+  "name": "asterisk-azure-stt-tts",
+  "version": "1.0.0",
+  "description": "ARI application to stream audio from Asterisk to Azure for STT and play TTS from Azure back to the caller.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "ari",
+    "asterisk",
+    "azure",
+    "stt",
+    "tts"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "ari-client": "^2.3.0",
+    "microsoft-cognitiveservices-speech-sdk": "1.35.0",
+    "dotenv": "^16.4.5",
+    "g711": "^1.0.1",
+    "uuid": "^9.0.1"
+  }
+}
