@@ -112,8 +112,8 @@ class App {
             // 1. Setup audio snooping
             await this.setupAudioSnooping(callState);
 
-            // 3. Play audio
-            await this.playTtsAudio(callState, textToSpeak.value);
+            // 3. Play audio in the background. Don't await it.
+            this.playTtsAudio(callState, textToSpeak);
 
             // 4. The call will now wait until the user hangs up or recognition completes.
             // The logic continues in the StasisEnd handler or after recognitionPromise resolves.
