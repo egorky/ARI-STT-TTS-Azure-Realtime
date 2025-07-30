@@ -271,8 +271,11 @@ class App {
     }
 
     enableTalkDetection(callState) {
-        const { mainChannel, userBridge } = callState;
+        const { mainChannel, userBridge, rtpServer } = callState;
         logger.info(`Enabling talk detection on channel ${mainChannel.id}`);
+
+        // Start pre-buffering audio to catch the beginning of speech
+        rtpServer.startPreBuffering(config.rtpServer.preBufferSize);
 
         // Start no-input timer
         if (config.app.timeouts.noInput > 0) {
@@ -304,9 +307,23 @@ class App {
             }
 
             logger.info(`Talking started on ${mainChannel.id}. Starting recognition session with Azure.`);
+
+            // Stop pre-buffering and get the buffered audio
+            const preBufferedAudio = rtpServer.stopPreBufferingAndFlush();
+
+            // Start the STT service and get the stream to push to
+            this.setupStt(callState);
+
+            // Push the pre-buffered audio first
+            if (preBufferedAudio.length > 0) {
+                const pcmPreBufferedAudio = ulawToPcm(preBufferedAudio);
+                callState.sttPushStream.write(pcmPreBufferedAudio);
+                logger.info(`Pushed ${preBufferedAudio.length} bytes of pre-buffered audio to Azure.`);
+            }
+
+            // Now, start sending real-time audio
             callState.isRecognizing = true;
 
-            this.setupStt(callState);
             await callState.recognitionPromise;
             await this.continueInDialplan(callState);
         };

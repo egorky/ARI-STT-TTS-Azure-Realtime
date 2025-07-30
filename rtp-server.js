@@ -26,9 +26,21 @@ class RtpServer extends EventEmitter {
         this.isPlaying = false;
         this.intervalId = null;
 
+        this.isPreBuffering = false;
+        this.preBuffer = [];
+        this.preBufferSize = 0;
+
         this.socket.on('message', (msg) => {
             const sequenceNumber = msg.readUInt16BE(2);
             const audioPayload = msg.slice(12);
+
+            if (this.isPreBuffering) {
+                this.preBuffer.push(audioPayload);
+                if (this.preBuffer.length > this.preBufferSize) {
+                    this.preBuffer.shift(); // Maintain buffer size
+                }
+                return;
+            }
 
             this.jitterBuffer.set(sequenceNumber, audioPayload);
 
@@ -126,6 +138,21 @@ class RtpServer extends EventEmitter {
                 }
             }
         }, 20); // Process packets every 20ms
+    }
+
+    startPreBuffering(bufferSize) {
+        logger.info(`Starting RTP pre-buffering with size ${bufferSize}`);
+        this.preBufferSize = bufferSize;
+        this.preBuffer = [];
+        this.isPreBuffering = true;
+    }
+
+    stopPreBufferingAndFlush() {
+        logger.info(`Stopping RTP pre-buffering and flushing ${this.preBuffer.length} packets.`);
+        this.isPreBuffering = false;
+        const flushedAudio = Buffer.concat(this.preBuffer);
+        this.preBuffer = [];
+        return flushedAudio;
     }
 
     close() {

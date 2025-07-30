@@ -47,6 +47,7 @@ const config = {
         ip: process.env.EXTERNAL_MEDIA_SERVER_IP || '127.0.0.1',
         port: parseInt(process.env.EXTERNAL_MEDIA_SERVER_PORT, 10) || 16000,
         audioFormat: process.env.EXTERNAL_MEDIA_AUDIO_FORMAT || 'ulaw',
+        preBufferSize: parseInt(process.env.RTP_PREBUFFER_SIZE, 10) || 100,
     }
 };
 
