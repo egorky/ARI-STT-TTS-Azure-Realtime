@@ -82,21 +82,15 @@ class App {
                 throw new Error('TEXT_TO_SPEAK variable not set on the channel.');
             }
 
-            // 1. Setup STT and the promise to wait for its completion
-            this.setupStt(callState);
-
-            // 2. Setup audio snooping
+            // 1. Setup audio snooping
             await this.setupAudioSnooping(callState);
 
             // 3. Play audio
             await this.playTtsAudio(callState, textToSpeak.value);
 
-            // 4. Wait for the recognition to complete
-            logger.info(`Channel ${channel.id} is now waiting for speech recognition to complete.`);
-            await callState.recognitionPromise;
-
-            // 5. Continue in dialplan
-            await this.continueInDialplan(callState);
+            // 4. The call will now wait until the user hangs up or recognition completes.
+            // The logic continues in the StasisEnd handler or after recognitionPromise resolves.
+            logger.info(`Channel ${channel.id} is now in a listening state.`);
 
         } catch (err) {
             logger.error(`Error handling call on channel ${channel.id}:`, err);
@@ -267,13 +261,24 @@ class App {
         const { mainChannel } = callState;
         logger.info(`Enabling talk detection on channel ${mainChannel.id}`);
 
-        mainChannel.on('ChannelTalkingStarted', () => {
+        mainChannel.once('ChannelTalkingStarted', async () => {
             if (callState.isPlayingPrompt) {
                 logger.info('Talk event ignored during prompt playback.');
+                // Re-arm the listener for the next event.
+                this.enableTalkDetection(callState);
                 return;
             }
-            logger.info(`Talking started on ${mainChannel.id}. Starting recognition.`);
+            logger.info(`Talking started on ${mainChannel.id}. Starting recognition session with Azure.`);
             callState.isRecognizing = true;
+
+            // Setup STT and the promise to wait for its completion, only now that we need it.
+            this.setupStt(callState);
+
+            // Wait for the recognition to complete
+            await callState.recognitionPromise;
+
+            // Continue in dialplan
+            await this.continueInDialplan(callState);
         });
 
         mainChannel.on('ChannelTalkingFinished', (event) => {
