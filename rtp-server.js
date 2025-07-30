@@ -2,7 +2,9 @@
 
 const dgram = require('dgram');
 const EventEmitter = require('events');
-const logger = require('./logger');
+const createLogger = require('./logger');
+
+const logger = createLogger(); // Global logger for this module
 
 /**
  * A simple RTP server to receive audio streams from Asterisk.

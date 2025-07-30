@@ -3,10 +3,11 @@
 // Carga la configuración primero para asegurar que las variables de entorno
 // estén disponibles para todos los módulos.
 require('./config');
-const logger = require('./logger');
+const createLogger = require('./logger');
 const App = require('./ari-client');
-
 const db = require('./database');
+
+const logger = createLogger(); // Create a global logger instance
 const app = new App();
 
 db.sequelize.sync({ force: false }) // Use { force: true } to drop and re-create tables on startup

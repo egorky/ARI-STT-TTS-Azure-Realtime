@@ -3,7 +3,9 @@
 const sdk = require('microsoft-cognitiveservices-speech-sdk');
 const EventEmitter = require('events');
 const { PassThrough } = require('stream');
-const logger = require('./logger');
+const createLogger = require('./logger');
+
+const logger = createLogger(); // Global logger for this module
 
 /**
  * Manages interactions with Azure Speech Services for both
