@@ -116,6 +116,7 @@ class App {
             await this.setupAudioSnooping(callState);
 
             // 3. Play audio in the background. Don't await it.
+            logger.info(`Synthesizing and playing prompt: "${textToSpeak}"`);
             this.playTtsAudio(callState, textToSpeak);
 
             // 4. The call will now wait until the user hangs up or recognition completes.
