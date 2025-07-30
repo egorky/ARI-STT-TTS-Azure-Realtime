@@ -69,11 +69,24 @@ class App {
             finalTranscript: '',
             playback: null,
             recognitionPromise: null, // To await the final transcript
+            isPlayingPrompt: false,
+            timers: {
+                session: null,
+                noInput: null,
+            }
         };
 
         this.activeCalls.set(channel.id, callState);
 
         try {
+            // Start session timeout
+            if (config.app.timeouts.session > 0) {
+                callState.timers.session = setTimeout(() => {
+                    logger.warn(`Session timeout reached for channel ${channel.id}. Hanging up.`);
+                    channel.hangup().catch(e => logger.error(`Error hanging up channel on session timeout:`, e));
+                }, config.app.timeouts.session);
+            }
+
             await channel.answer();
             logger.info(`Channel ${channel.id} answered.`);
 
@@ -261,7 +274,18 @@ class App {
         const { mainChannel, userBridge } = callState;
         logger.info(`Enabling talk detection on channel ${mainChannel.id}`);
 
+        // Start no-input timer
+        if (config.app.timeouts.noInput > 0) {
+            callState.timers.noInput = setTimeout(() => {
+                logger.warn(`No-input timeout reached for channel ${mainChannel.id}. Hanging up.`);
+                mainChannel.hangup().catch(e => logger.error(`Error hanging up channel on no-input timeout:`, e));
+            }, config.app.timeouts.noInput);
+        }
+
         const onTalkingStarted = async () => {
+            // Once user speaks, clear the no-input timer
+            clearTimeout(callState.timers.noInput);
+
             // This event can fire multiple times, but we only want to start the STT session once.
             // We remove the listener immediately to prevent re-entry.
             mainChannel.removeListener('ChannelTalkingStarted', onTalkingStarted);
@@ -330,9 +354,12 @@ class App {
         if (!callState) return;
         logger.info(`Cleaning up resources for main channel ${callState.mainChannel.id}...`);
 
-        // Remove listeners
-        callState.mainChannel.removeAllListeners('ChannelTalkingStarted');
-        callState.mainChannel.removeAllListeners('ChannelTalkingFinished');
+        // Clear all timers
+        clearTimeout(callState.timers.session);
+        clearTimeout(callState.timers.noInput);
+
+        // Remove all listeners from the channel to prevent memory leaks
+        callState.mainChannel.removeAllListeners();
 
         if (callState.snoopChannel) {
             this.internalChannelIds.delete(callState.snoopChannel.id);
