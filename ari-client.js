@@ -8,7 +8,7 @@ const { ulawToPcm } = require('./audio-converter');
 const soundManager = require('./sound-manager');
 const config = require('./config');
 const createLogger = require('./logger');
-const db = require('../database');
+const db = require('./database');
 
 const logger = createLogger(); // Global logger for app-level events
 
