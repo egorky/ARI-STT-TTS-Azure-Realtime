@@ -188,7 +188,7 @@ class App {
             let vadEnabled = false;
 
             const processQueue = async () => {
-                if (processing || chunkQueue.length === 0) {
+                if (processing || chunkQueue.length === 0 || !callState.isPlayingPrompt) {
                     if (streamFinished && chunkQueue.length === 0) {
                         resolveStreamEnd();
                     }
@@ -258,43 +258,48 @@ class App {
     }
 
     enableTalkDetection(callState) {
-        const { mainChannel } = callState;
+        const { mainChannel, userBridge } = callState;
         logger.info(`Enabling talk detection on channel ${mainChannel.id}`);
 
-        mainChannel.once('ChannelTalkingStarted', async () => {
+        const onTalkingStarted = async () => {
+            // This event can fire multiple times, but we only want to start the STT session once.
+            // We remove the listener immediately to prevent re-entry.
+            mainChannel.removeListener('ChannelTalkingStarted', onTalkingStarted);
+
             if (callState.isPlayingPrompt) {
-                logger.info('Talk event ignored during prompt playback.');
-                // Re-arm the listener for the next event.
-                this.enableTalkDetection(callState);
-                return;
+                logger.info('Barge-in detected. Stopping prompt playback.');
+                callState.isPlayingPrompt = false; // Stop the prompt loop
+                if (userBridge) {
+                    try {
+                        // Stop any currently playing audio on the bridge
+                        await userBridge.stopMoh();
+                    } catch (e) {
+                         // ignore if no playback
+                    }
+                }
             }
+
             logger.info(`Talking started on ${mainChannel.id}. Starting recognition session with Azure.`);
             callState.isRecognizing = true;
 
-            // Setup STT and the promise to wait for its completion, only now that we need it.
             this.setupStt(callState);
-
-            // Wait for the recognition to complete
             await callState.recognitionPromise;
-
-            // Continue in dialplan
             await this.continueInDialplan(callState);
-        });
+        };
 
-        mainChannel.on('ChannelTalkingFinished', (event) => {
-            if (callState.isPlayingPrompt) {
-                logger.info('Talk finish event ignored during prompt playback.');
-                return;
+        const onTalkingFinished = (event) => {
+             if (callState.isRecognizing) { // Only act if we were actively recognizing
+                logger.info(`Talking finished on ${mainChannel.id}. Duration: ${event.duration} ms. Stopping recognition stream.`);
+                callState.isRecognizing = false;
+                if (this.azureService) {
+                    this.azureService.stopContinuousRecognition();
+                }
             }
-            logger.info(`Talking finished on ${mainChannel.id}. Duration: ${event.duration} ms. Stopping recognition stream.`);
-            callState.isRecognizing = false;
+        };
 
-            // Explicitly signal to the Azure SDK that the audio stream is finished.
-            // This will trigger a final 'recognized' event and then 'sessionStopped'.
-            if (this.azureService) {
-                this.azureService.stopContinuousRecognition();
-            }
-        });
+        // Assign listeners
+        mainChannel.on('ChannelTalkingStarted', onTalkingStarted);
+        mainChannel.on('ChannelTalkingFinished', onTalkingFinished);
 
         // Setting TALK_DETECT values. Some Asterisk versions expect a positional format.
         // Format: "<silence_threshold>,<speech_threshold>"
