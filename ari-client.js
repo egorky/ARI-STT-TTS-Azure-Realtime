@@ -228,9 +228,9 @@ class App {
             // We can also force it if needed, but letting Azure detect the end of speech is often better.
         });
 
-        // The format for TALK_DETECT is a string of key=value pairs.
-        // Example: "speech_threshold=500,silence_threshold=1200"
-        const talkDetectValue = `speech_threshold=${config.app.talkDetect.speechThreshold},silence_threshold=${config.app.talkDetect.silenceThreshold}`;
+        // Setting TALK_DETECT values. Some Asterisk versions expect a positional format.
+        // Format: "<silence_threshold>,<speech_threshold>"
+        const talkDetectValue = `${config.app.talkDetect.silenceThreshold},${config.app.talkDetect.speechThreshold}`;
 
         mainChannel.setChannelVar({
             variable: 'TALK_DETECT(set)',
