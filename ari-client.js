@@ -61,10 +61,10 @@ class App {
 
     async handleCall(channel) {
         const callerId = channel.caller.number;
-        const uniqueId = channel.id.split('.')[0]; // Use the base ID for grouping
+        const uniqueId = channel.id; // Use the full, unique channel ID
         const logger = createLogger({ uniqueId, callerId });
 
-        logger.info(`Incoming call on channel ${channel.id}`);
+        logger.info(`Incoming call`);
         const callState = {
             logger,
             mainChannel: channel,
@@ -264,25 +264,26 @@ class App {
                 }
             });
 
-            ttsAudioStream.on('end', () => {
+            ttsAudioStream.on('end', async () => {
                 callState.logger.info('TTS stream from Azure has ended.');
                 streamFinished = true;
+
+                // Save the full audio file as soon as the stream ends
+                const fullAudioBuffer = Buffer.concat(allChunks);
+                const finalAudioPath = await soundManager.saveFinalAudio(fullAudioBuffer, mainChannel.id, logger);
+                callState.synthesizedAudioPath = finalAudioPath;
+
                 if (!processing && chunkQueue.length === 0) {
                     resolveStreamEnd();
                 }
             });
 
             await streamEndPromise;
-            logger.info(`All TTS chunks have been played.`);
+            logger.info(`All TTS chunks have been queued for playback.`);
 
             if (config.app.vad.activationMode === 'after_prompt_end') {
                 this.enableTalkDetection(callState);
             }
-
-            // Save the full audio file
-            const fullAudioBuffer = Buffer.concat(allChunks);
-            const finalAudioPath = await soundManager.saveFinalAudio(fullAudioBuffer, mainChannel.id, logger);
-            callState.synthesizedAudioPath = finalAudioPath;
 
         } catch (err) {
             logger.error(`Error during TTS streaming playback:`, err);
@@ -419,7 +420,7 @@ class App {
         const { logger, mainChannel, textToSynthesize, synthesizedAudioPath, recognitionMode, finalTranscript, dtmfDigits } = callState;
         try {
             await db.Interaction.create({
-                uniqueId: mainChannel.id.split('.')[0],
+                uniqueId: mainChannel.id,
                 callerId: mainChannel.caller.number,
                 textToSynthesize,
                 synthesizedAudioPath,
