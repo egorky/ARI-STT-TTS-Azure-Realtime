@@ -347,7 +347,7 @@ class App {
         };
 
         const onDtmfReceived = async (event) => {
-            // DTMF received, so voice recognition is no longer the primary input.
+            // This logic runs for the FIRST digit received.
             if (callState.recognitionMode === 'voice') {
                 logger.info(`DTMF digit '${event.digit}' received. Switching to DTMF mode.`);
                 callState.recognitionMode = 'dtmf';
@@ -368,17 +368,18 @@ class App {
                         try { await userBridge.stopMoh(); } catch (e) { /* ignore */ }
                     }
                 }
+            }
 
-            // Append the digit and reset the completion timer
+            // This logic runs for EVERY digit received.
             callState.dtmfDigits += event.digit;
             logger.info(`Current DTMF digits: ${callState.dtmfDigits}`);
-            clearTimeout(callState.timers.dtmf);
 
+            // Reset the completion timer
+            clearTimeout(callState.timers.dtmf);
             callState.timers.dtmf = setTimeout(async () => {
                 logger.info(`DTMF completion timeout reached. Final digits: ${callState.dtmfDigits}`);
                 await this.continueInDialplan(callState);
             }, config.app.dtmf.completionTimeout);
-            }
         };
 
         // Assign listeners
