@@ -222,10 +222,14 @@ class App {
         });
 
         mainChannel.on('ChannelTalkingFinished', (event) => {
-            console.log(`Talking finished on ${mainChannel.id}. Duration: ${event.duration} ms. Stopping recognition.`);
+            console.log(`Talking finished on ${mainChannel.id}. Duration: ${event.duration} ms. Stopping recognition stream.`);
             callState.isRecognizing = false;
-            // The session will stop automatically after a short timeout.
-            // We can also force it if needed, but letting Azure detect the end of speech is often better.
+
+            // Explicitly signal to the Azure SDK that the audio stream is finished.
+            // This will trigger a final 'recognized' event and then 'sessionStopped'.
+            if (this.azureService) {
+                this.azureService.stopContinuousRecognition();
+            }
         });
 
         // Setting TALK_DETECT values. Some Asterisk versions expect a positional format.
