@@ -13,6 +13,7 @@ class App {
         this.ariClient = null;
         this.azureService = new AzureService(config);
         this.activeCalls = new Map(); // Track active calls by channel ID
+        this.internalChannelIds = new Set(); // Track all channels created by the app
     }
 
     async start() {
@@ -50,13 +51,7 @@ class App {
     }
 
     isInternalChannel(channelId) {
-        for (const callState of this.activeCalls.values()) {
-            if ((callState.snoopChannel && callState.snoopChannel.id === channelId) ||
-                (callState.externalMediaChannel && callState.externalMediaChannel.id === channelId)) {
-                return true;
-            }
-        }
-        return false;
+        return this.internalChannelIds.has(channelId);
     }
 
     async handleCall(channel) {
@@ -72,6 +67,7 @@ class App {
             isRecognizing: false,
             finalTranscript: '',
             playback: null,
+            recognitionPromise: null, // To await the final transcript
         };
 
         this.activeCalls.set(channel.id, callState);
@@ -85,19 +81,22 @@ class App {
                 throw new Error('TEXT_TO_SPEAK variable not set on the channel.');
             }
 
-            // 1. Setup Azure STT
+            // 1. Setup STT and the promise to wait for its completion
             this.setupStt(callState);
 
             // 2. Setup audio snooping
             await this.setupAudioSnooping(callState);
 
-            // 3. Synthesize and play audio
+            // 3. Play audio and enable talk detection
             await this.playTtsAudio(callState, textToSpeak.value);
+            this.enableTalkDetection(callState); // Enable immediately after playback
 
-            // 4. Enable talk detection after a delay
-            setTimeout(() => {
-                this.enableTalkDetection(callState);
-            }, config.app.talkDetectActivationDelay);
+            // 4. Wait for the recognition to complete
+            console.log(`Channel ${channel.id} is now waiting for speech recognition to complete.`);
+            await callState.recognitionPromise;
+
+            // 5. Continue in dialplan
+            await this.continueInDialplan(callState);
 
         } catch (err) {
             console.error(`Error handling call on channel ${channel.id}:`, err);
@@ -106,18 +105,26 @@ class App {
     }
 
     setupStt(callState) {
+        let recognitionResolve;
+        callState.recognitionPromise = new Promise(resolve => {
+            recognitionResolve = resolve;
+        });
+
         this.azureService.startContinuousRecognition();
+
         this.azureService.once('audioStreamReady', (pushStream) => {
             callState.sttPushStream = pushStream;
         });
+
         this.azureService.once('recognitionEnded', (result) => {
             callState.finalTranscript = result.finalText;
             console.log(`Final transcript for ${callState.mainChannel.id}: ${result.finalText}`);
-            this.continueInDialplan(callState);
+            recognitionResolve();
         });
+
         this.azureService.on('recognitionError', (err) => {
             console.error(`STT Error for ${callState.mainChannel.id}:`, err);
-            this.continueInDialplan(callState); // Continue even on error
+            recognitionResolve(); // Resolve even on error to unblock the call flow
         });
     }
 
@@ -149,6 +156,7 @@ class App {
             app: config.ari.appName,
             spy: 'in'
         });
+        this.internalChannelIds.add(callState.snoopChannel.id);
         console.log(`Snoop channel ${callState.snoopChannel.id} created for channel ${mainChannel.id}`);
 
         // Create external media channel
@@ -157,6 +165,7 @@ class App {
             external_host: `${rtpServerAddress.address}:${rtpServerAddress.port}`,
             format: config.rtpServer.audioFormat,
         });
+        this.internalChannelIds.add(callState.externalMediaChannel.id);
         console.log(`External media channel ${callState.externalMediaChannel.id} created.`);
 
         // Create snoop bridge and bridge channels
@@ -253,9 +262,11 @@ class App {
         callState.mainChannel.removeAllListeners('ChannelTalkingFinished');
 
         if (callState.snoopChannel) {
+            this.internalChannelIds.delete(callState.snoopChannel.id);
             try { await callState.snoopChannel.hangup(); } catch (e) { /* ignore */ }
         }
         if (callState.externalMediaChannel) {
+            this.internalChannelIds.delete(callState.externalMediaChannel.id);
             try { await callState.externalMediaChannel.hangup(); } catch (e) { /* ignore */ }
         }
         if (callState.userBridge) {
