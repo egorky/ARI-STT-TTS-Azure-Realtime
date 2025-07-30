@@ -88,9 +88,8 @@ class App {
             // 2. Setup audio snooping
             await this.setupAudioSnooping(callState);
 
-            // 3. Play audio and enable talk detection
+            // 3. Play audio
             await this.playTtsAudio(callState, textToSpeak.value);
-            this.enableTalkDetection(callState); // Enable immediately after playback
 
             // 4. Wait for the recognition to complete
             logger.info(`Channel ${channel.id} is now waiting for speech recognition to complete.`);
@@ -191,6 +190,7 @@ class App {
             const allChunks = [];
             let streamFinished = false;
             let processing = false;
+            let vadEnabled = false;
 
             const processQueue = async () => {
                 if (processing || chunkQueue.length === 0) {
@@ -200,6 +200,11 @@ class App {
                     return;
                 }
                 processing = true;
+
+                if (!vadEnabled && config.app.vad.activationMode === 'after_prompt_start') {
+                    vadEnabled = true;
+                    setTimeout(() => this.enableTalkDetection(callState), config.app.vad.activationDelay);
+                }
 
                 const chunk = chunkQueue.shift();
 
@@ -211,19 +216,14 @@ class App {
                     playback.once('PlaybackFinished', () => {
                         logger.info(`Finished playing chunk ${tempAudioFile.filePath}.`);
                         soundManager.cleanupTempAudio(tempAudioFile.filePath); // Fire-and-forget
+                        processing = false;
                         processQueue(); // Process next chunk
                     });
 
                     await userBridge.play({ media: tempAudioFile.soundUri, playbackId: playback.id });
                 } catch (err) {
                     logger.error('Error processing TTS audio chunk:', err);
-                } finally {
                     processing = false;
-                    if (chunkQueue.length > 0) {
-                        processQueue();
-                    } else if (streamFinished) {
-                        resolveStreamEnd();
-                    }
                 }
             };
 
@@ -245,6 +245,10 @@ class App {
 
             await streamEndPromise;
             logger.info(`All TTS chunks have been played for channel ${mainChannel.id}.`);
+
+            if (config.app.vad.activationMode === 'after_prompt_end') {
+                this.enableTalkDetection(callState);
+            }
 
             // Save the full audio file
             const fullAudioBuffer = Buffer.concat(allChunks);

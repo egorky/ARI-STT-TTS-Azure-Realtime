@@ -83,27 +83,48 @@ class RtpServer extends EventEmitter {
      */
     startPlayback() {
         this.isPlaying = true;
+        // A threshold to decide when to skip a lost packet. 5 * 20ms = 100ms
+        const MAX_MISSES = 5;
+        let missCount = 0;
+
         this.intervalId = setInterval(() => {
-            if (this.lastPlayedSeq === -1) {
-                // First packet
-                if (this.jitterBuffer.size > 0) {
-                    const firstSeq = Math.min(...this.jitterBuffer.keys());
-                    this.lastPlayedSeq = firstSeq -1;
-                } else {
-                    return; // No packets yet
-                }
+            if (this.jitterBuffer.size === 0) {
+                return; // Nothing to play
             }
 
-            const nextSeq = (this.lastPlayedSeq + 1) % 65536; // Handle wrap-around
+            if (this.lastPlayedSeq === -1) {
+                // Initialize with the smallest sequence number in the buffer
+                this.lastPlayedSeq = Math.min(...this.jitterBuffer.keys()) - 1;
+            }
+
+            const nextSeq = (this.lastPlayedSeq + 1) % 65536;
+
             if (this.jitterBuffer.has(nextSeq)) {
+                missCount = 0; // Reset miss counter
                 const audioPayload = this.jitterBuffer.get(nextSeq);
                 this.emit('audioPacket', audioPayload);
                 this.jitterBuffer.delete(nextSeq);
                 this.lastPlayedSeq = nextSeq;
-            }
-            // Simple buffer: if a packet is missing, we just wait.
-            // A more advanced implementation would have a timeout to skip lost packets.
+            } else {
+                // Packet is missing
+                missCount++;
+                if (missCount > MAX_MISSES) {
+                    // We've waited long enough, skip to the next available packet
+                    const availableKeys = Array.from(this.jitterBuffer.keys());
+                    // Find a key that is "close" to the one we expect, to handle wrap-around
+                    const nextAvailableSeq = availableKeys.sort((a, b) => {
+                        const diffA = Math.abs(a - nextSeq);
+                        const diffB = Math.abs(b - nextSeq);
+                        return diffA - diffB;
+                    })[0];
 
+                    if (nextAvailableSeq !== undefined) {
+                        logger.warn(`RTP packet ${nextSeq} lost. Skipping to next available packet ${nextAvailableSeq}.`);
+                        this.lastPlayedSeq = nextAvailableSeq - 1;
+                    }
+                    missCount = 0;
+                }
+            }
         }, 20); // Process packets every 20ms
     }
 

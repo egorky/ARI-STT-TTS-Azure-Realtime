@@ -34,6 +34,10 @@ const config = {
             silenceThreshold: parseInt(process.env.TALK_DETECT_SILENCE_THRESHOLD, 10) || 1200,
             speechThreshold: parseInt(process.env.TALK_DETECT_SPEECH_THRESHOLD, 10) || 500,
         },
+        vad: {
+            activationMode: process.env.VAD_ACTIVATION_MODE || 'after_prompt_start',
+            activationDelay: parseInt(process.env.VAD_ACTIVATION_DELAY_MS, 10) || 500,
+        }
     },
     rtpServer: {
         ip: process.env.EXTERNAL_MEDIA_SERVER_IP || '127.0.0.1',
