@@ -41,6 +41,10 @@ const config = {
         timeouts: {
             session: parseInt(process.env.ARI_SESSION_TIMEOUT_MS, 10) || 60000,
             noInput: parseInt(process.env.NO_INPUT_TIMEOUT_MS, 10) || 10000,
+        },
+        dtmf: {
+            enabled: (process.env.ENABLE_DTMF || 'true').toLowerCase() === 'true',
+            completionTimeout: parseInt(process.env.DTMF_COMPLETION_TIMEOUT_MS, 10) || 2000,
         }
     },
     rtpServer: {

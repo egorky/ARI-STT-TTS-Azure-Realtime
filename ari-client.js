@@ -73,7 +73,10 @@ class App {
             timers: {
                 session: null,
                 noInput: null,
-            }
+                dtmf: null,
+            },
+            dtmfDigits: '',
+            recognitionMode: 'voice' // Can be 'voice' or 'dtmf'
         };
 
         this.activeCalls.set(channel.id, callState);
@@ -343,9 +346,47 @@ class App {
             }
         };
 
+        const onDtmfReceived = async (event) => {
+            // DTMF received, so voice recognition is no longer the primary input.
+            if (callState.recognitionMode === 'voice') {
+                logger.info(`DTMF digit '${event.digit}' received. Switching to DTMF mode.`);
+                callState.recognitionMode = 'dtmf';
+
+                // Cancel voice-related timers and listeners
+                clearTimeout(callState.timers.noInput);
+                mainChannel.removeListener('ChannelTalkingStarted', onTalkingStarted);
+                if (callState.isRecognizing) {
+                    this.azureService.stopContinuousRecognition();
+                    callState.isRecognizing = false;
+                }
+
+                // Barge-in for DTMF
+                if (callState.isPlayingPrompt) {
+                    logger.info('DTMF Barge-in detected. Stopping prompt playback.');
+                    callState.isPlayingPrompt = false;
+                    if (userBridge) {
+                        try { await userBridge.stopMoh(); } catch (e) { /* ignore */ }
+                    }
+                }
+
+            // Append the digit and reset the completion timer
+            callState.dtmfDigits += event.digit;
+            logger.info(`Current DTMF digits: ${callState.dtmfDigits}`);
+            clearTimeout(callState.timers.dtmf);
+
+            callState.timers.dtmf = setTimeout(async () => {
+                logger.info(`DTMF completion timeout reached. Final digits: ${callState.dtmfDigits}`);
+                await this.continueInDialplan(callState);
+            }, config.app.dtmf.completionTimeout);
+            }
+        };
+
         // Assign listeners
         mainChannel.on('ChannelTalkingStarted', onTalkingStarted);
         mainChannel.on('ChannelTalkingFinished', onTalkingFinished);
+        if (config.app.dtmf.enabled) {
+            mainChannel.on('ChannelDtmfReceived', onDtmfReceived);
+        }
 
         // Setting TALK_DETECT values. Some Asterisk versions expect a positional format.
         // Format: "<silence_threshold>,<speech_threshold>"
@@ -363,7 +404,13 @@ class App {
         if (callState && callState.mainChannel) {
             logger.info(`Continuing in dialplan for channel ${callState.mainChannel.id}`);
             try {
-                await callState.mainChannel.setChannelVar({ variable: 'TRANSCRIPT', value: callState.finalTranscript });
+                if (callState.recognitionMode === 'dtmf') {
+                    await callState.mainChannel.setChannelVar({ variable: 'DTMF_RESULT', value: callState.dtmfDigits });
+                    await callState.mainChannel.setChannelVar({ variable: 'RECOGNITION_MODE', value: 'DTMF' });
+                } else {
+                    await callState.mainChannel.setChannelVar({ variable: 'TRANSCRIPT', value: callState.finalTranscript });
+                    await callState.mainChannel.setChannelVar({ variable: 'RECOGNITION_MODE', value: 'VOICE' });
+                }
                 await callState.mainChannel.continueInDialplan();
             } catch (err) {
                  logger.error(`Error continuing in dialplan for ${callState.mainChannel.id}:`, err);
@@ -379,6 +426,7 @@ class App {
         // Clear all timers
         clearTimeout(callState.timers.session);
         clearTimeout(callState.timers.noInput);
+        clearTimeout(callState.timers.dtmf);
 
         // Remove all listeners from the channel to prevent memory leaks
         callState.mainChannel.removeAllListeners();
