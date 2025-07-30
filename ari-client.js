@@ -178,38 +178,54 @@ class App {
 
     async playTtsAudio(callState, text) {
         const { mainChannel, userBridge } = callState;
-        let tempAudioFile = null;
 
         try {
             const ttsAudioStream = await this.azureService.synthesizeText(text);
+            let playbackQueue = [];
+            let streamFinished = false;
 
-            const audioBuffer = await new Promise((resolve, reject) => {
-                const chunks = [];
-                ttsAudioStream.on('data', chunk => chunks.push(chunk));
-                ttsAudioStream.on('end', () => resolve(Buffer.concat(chunks)));
-                ttsAudioStream.on('error', reject);
+            const streamEndPromise = new Promise(resolve => ttsAudioStream.on('end', () => {
+                streamFinished = true;
+                // Check if the queue is empty and resolve if so
+                if (playbackQueue.length === 0) resolve();
+            }));
+
+            ttsAudioStream.on('data', async (chunk) => {
+                if (chunk.length === 0) return;
+
+                try {
+                    const tempAudioFile = await soundManager.saveTempAudio(chunk);
+
+                    const playback = this.ariClient.Playback();
+                    playbackQueue.push(playback.id);
+                    logger.info(`Queueing chunk ${tempAudioFile.filePath} for playback.`);
+
+                    playback.once('PlaybackFinished', async () => {
+                        logger.info(`Finished playing chunk ${tempAudioFile.filePath}.`);
+                        await soundManager.cleanupTempAudio(tempAudioFile.filePath);
+
+                        // Remove from queue
+                        const index = playbackQueue.indexOf(playback.id);
+                        if (index > -1) playbackQueue.splice(index, 1);
+
+                        // If the stream is done and this was the last file, resolve the promise
+                        if (streamFinished && playbackQueue.length === 0) {
+                            streamEndPromise.resolve();
+                        }
+                    });
+
+                    await userBridge.play({ media: tempAudioFile.soundUri, playbackId: playback.id });
+
+                } catch (err) {
+                    logger.error('Error processing TTS audio chunk:', err);
+                }
             });
 
-            tempAudioFile = await soundManager.saveTempAudio(audioBuffer);
+            await streamEndPromise;
+            logger.info(`All TTS chunks have been played for channel ${mainChannel.id}.`);
 
-            logger.info(`Playing temporary audio file ${tempAudioFile.filePath} to channel ${mainChannel.id}`);
-
-            callState.playback = this.ariClient.Playback();
-            const playbackFinished = new Promise(resolve => {
-                callState.playback.once('PlaybackFinished', resolve);
-                callState.playback.once('PlaybackFailed', resolve); // Also resolve on failure to ensure cleanup
-            });
-
-            await userBridge.play({ media: tempAudioFile.soundUri, playbackId: callState.playback.id });
-
-            logger.info(`Playback started on channel ${mainChannel.id}`);
-            await playbackFinished;
-            logger.info(`Playback finished on channel ${mainChannel.id}`);
-
-        } finally {
-            if (tempAudioFile) {
-                await soundManager.cleanupTempAudio(tempAudioFile.filePath);
-            }
+        } catch (err) {
+            logger.error(`Error during TTS streaming playback for channel ${mainChannel.id}:`, err);
         }
     }
 
