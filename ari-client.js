@@ -181,48 +181,74 @@ class App {
 
         try {
             const ttsAudioStream = await this.azureService.synthesizeText(text);
-            let playbackQueue = [];
+
+            let resolveStreamEnd;
+            const streamEndPromise = new Promise(resolve => {
+                resolveStreamEnd = resolve;
+            });
+
+            const chunkQueue = [];
+            const allChunks = [];
             let streamFinished = false;
+            let processing = false;
 
-            const streamEndPromise = new Promise(resolve => ttsAudioStream.on('end', () => {
-                streamFinished = true;
-                // Check if the queue is empty and resolve if so
-                if (playbackQueue.length === 0) resolve();
-            }));
+            const processQueue = async () => {
+                if (processing || chunkQueue.length === 0) {
+                    if (streamFinished && chunkQueue.length === 0) {
+                        resolveStreamEnd();
+                    }
+                    return;
+                }
+                processing = true;
 
-            ttsAudioStream.on('data', async (chunk) => {
-                if (chunk.length === 0) return;
+                const chunk = chunkQueue.shift();
 
                 try {
                     const tempAudioFile = await soundManager.saveTempAudio(chunk);
-
-                    const playback = this.ariClient.Playback();
-                    playbackQueue.push(playback.id);
                     logger.info(`Queueing chunk ${tempAudioFile.filePath} for playback.`);
 
-                    playback.once('PlaybackFinished', async () => {
+                    const playback = this.ariClient.Playback();
+                    playback.once('PlaybackFinished', () => {
                         logger.info(`Finished playing chunk ${tempAudioFile.filePath}.`);
-                        await soundManager.cleanupTempAudio(tempAudioFile.filePath);
-
-                        // Remove from queue
-                        const index = playbackQueue.indexOf(playback.id);
-                        if (index > -1) playbackQueue.splice(index, 1);
-
-                        // If the stream is done and this was the last file, resolve the promise
-                        if (streamFinished && playbackQueue.length === 0) {
-                            streamEndPromise.resolve();
-                        }
+                        soundManager.cleanupTempAudio(tempAudioFile.filePath); // Fire-and-forget
+                        processQueue(); // Process next chunk
                     });
 
                     await userBridge.play({ media: tempAudioFile.soundUri, playbackId: playback.id });
-
                 } catch (err) {
                     logger.error('Error processing TTS audio chunk:', err);
+                } finally {
+                    processing = false;
+                    if (chunkQueue.length > 0) {
+                        processQueue();
+                    } else if (streamFinished) {
+                        resolveStreamEnd();
+                    }
+                }
+            };
+
+            ttsAudioStream.on('data', (chunk) => {
+                if (chunk.length > 0) {
+                    chunkQueue.push(chunk);
+                    allChunks.push(chunk);
+                    processQueue();
+                }
+            });
+
+            ttsAudioStream.on('end', () => {
+                logger.info('TTS stream from Azure has ended.');
+                streamFinished = true;
+                if (!processing && chunkQueue.length === 0) {
+                    resolveStreamEnd();
                 }
             });
 
             await streamEndPromise;
             logger.info(`All TTS chunks have been played for channel ${mainChannel.id}.`);
+
+            // Save the full audio file
+            const fullAudioBuffer = Buffer.concat(allChunks);
+            await soundManager.saveFinalAudio(fullAudioBuffer, mainChannel.id);
 
         } catch (err) {
             logger.error(`Error during TTS streaming playback for channel ${mainChannel.id}:`, err);

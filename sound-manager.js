@@ -73,8 +73,38 @@ async function cleanupTempAudio(filePath) {
     }
 }
 
+const RECORDINGS_DIR_NAME = 'recordings';
+
+/**
+ * Saves the complete audio buffer to a permanent file in the recordings directory.
+ * @param {Buffer} audioBuffer - The complete audio data.
+ * @param {string} identifier - A unique identifier for the file, e.g., channel ID.
+ * @returns {Promise<void>}
+ */
+async function saveFinalAudio(audioBuffer, identifier) {
+    const recordingsDir = path.join(process.cwd(), RECORDINGS_DIR_NAME);
+    await fs.mkdir(recordingsDir, { recursive: true });
+
+    const filename = `${identifier}_${new Date().toISOString()}.wav`;
+    const filePath = path.join(recordingsDir, filename);
+
+    try {
+        const wavOptions = {
+            numChannels: 1,
+            sampleRate: 8000,
+            bitDepth: 16,
+        };
+        const wavBuffer = addWavHeader(audioBuffer, wavOptions);
+        await fs.writeFile(filePath, wavBuffer);
+        logger.info(`Saved full audio recording to ${filePath}`);
+    } catch (err) {
+        logger.error(`Failed to save final audio recording: ${filePath}`, err);
+    }
+}
+
 module.exports = {
     initialize,
     saveTempAudio,
     cleanupTempAudio,
+    saveFinalAudio,
 };
