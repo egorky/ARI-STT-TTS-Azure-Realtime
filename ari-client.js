@@ -17,7 +17,6 @@ class App {
         this.ariClient = null;
         // this.azureService is no longer global
         this.activeCalls = new Map(); // Track active calls by channel ID
-        this.internalChannelIds = new Set(); // Track all channels created by the app
     }
 
     async start() {
@@ -27,9 +26,8 @@ class App {
             logger.info('Connected to Asterisk ARI');
 
             this.ariClient.on('StasisStart', (event, channel) => {
-                // Ignore channels that are part of an existing call setup (snoop/external)
-                if (this.isInternalChannel(channel.id)) {
-                    // Use a temporary logger as we don't have full context yet
+                // Ignore channels that are marked as internal
+                if (event.args && event.args.includes('internal')) {
                     createLogger().info(`Ignoring internal channel ${channel.id} entering Stasis.`);
                     channel.answer().catch(err => createLogger().error(`Failed to answer internal channel ${channel.id}:`, err));
                     return;
@@ -53,10 +51,6 @@ class App {
             logger.error('Failed to connect or start ARI client:', err);
             process.exit(1);
         }
-    }
-
-    isInternalChannel(channelId) {
-        return this.internalChannelIds.has(channelId);
     }
 
     async handleCall(channel) {
@@ -186,9 +180,9 @@ class App {
             channelId: mainChannel.id,
             snoopId: snoopId,
             app: config.ari.appName,
-            spy: 'in'
+            spy: 'in',
+            appArgs: 'internal' // Mark this channel as internal
         });
-        this.internalChannelIds.add(callState.snoopChannel.id);
         callState.logger.info(`Snoop channel ${callState.snoopChannel.id} created.`);
 
         // Create external media channel
@@ -196,8 +190,8 @@ class App {
             app: config.ari.appName,
             external_host: `${rtpServerAddress.address}:${rtpServerAddress.port}`,
             format: config.rtpServer.audioFormat,
+            appArgs: 'internal' // Mark this channel as internal
         });
-        this.internalChannelIds.add(callState.externalMediaChannel.id);
         callState.logger.info(`External media channel ${callState.externalMediaChannel.id} created.`);
 
         // Create snoop bridge and bridge channels
@@ -542,11 +536,9 @@ class App {
         callState.mainChannel.removeAllListeners();
 
         if (callState.snoopChannel) {
-            this.internalChannelIds.delete(callState.snoopChannel.id);
             try { await callState.snoopChannel.hangup(); } catch (e) { /* ignore */ }
         }
         if (callState.externalMediaChannel) {
-            this.internalChannelIds.delete(callState.externalMediaChannel.id);
             try { await callState.externalMediaChannel.hangup(); } catch (e) { /* ignore */ }
         }
         if (callState.userBridge) {
