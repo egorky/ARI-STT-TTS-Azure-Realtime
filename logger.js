@@ -46,6 +46,13 @@ const createLogger = (context = null) => ({
     warn: (...args) => log('warn', context, ...args),
     error: (...args) => log('error', context, ...args),
     debug: (...args) => log('debug', context, ...args),
+    isLevelEnabled: (level) => {
+        const targetLevel = LOG_LEVELS[level.toLowerCase()];
+        if (targetLevel === undefined) {
+            return false;
+        }
+        return targetLevel >= currentLogLevel;
+    }
 });
 
 module.exports = createLogger;
