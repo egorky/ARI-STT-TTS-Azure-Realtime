@@ -114,3 +114,32 @@ Parámetros relacionados con el flujo de audio desde Asterisk.
 -   **`EXTERNAL_MEDIA_AUDIO_FORMAT`**
     -   **Descripción**: El formato de audio que se solicitará a Asterisk para el `externalMediaChannel`. Debe coincidir con lo que espera el `audio-converter`.
     -   **Valor recomendado**: `ulaw`
+
+## 7. Configuración de DTMF
+
+Parámetros para la detección de tonos de teclado (DTMF).
+
+-   **`ENABLE_DTMF`**
+    -   **Descripción**: Habilita o deshabilita la detección de DTMF. Si está habilitado, la aplicación puede capturar dígitos del teclado además del reconocimiento de voz.
+    -   **Valores**: `true`, `false`
+    -   **Default**: `true`
+
+-   **`DTMF_COMPLETION_TIMEOUT_MS`**
+    -   **Descripción**: El tiempo en milisegundos que la aplicación esperará después de que se presione el último dígito antes de considerar que la entrada está completa.
+    -   **Ejemplo**: `2000`
+
+## 8. Configuración de la Base de Datos
+
+Parámetros para la conexión a la base de datos para registrar las interacciones.
+
+-   **`DB_DIALECT`**
+    -   **Descripción**: El dialecto de la base de datos a utilizar. Soportado por Sequelize.
+    -   **Valores**: `sqlite`, `mysql`, `postgres`, etc.
+    -   **Default**: `sqlite`
+
+-   **`DB_STORAGE`**
+    -   **Descripción**: Si se usa `sqlite`, esta es la ruta al archivo de la base de datos.
+    -   **Ejemplo**: `./database/prod.sqlite`
+
+-   **`DB_HOST`**, **`DB_PORT`**, **`DB_USER`**, **`DB_PASSWORD`**, **`DB_DATABASE`**
+    -   **Descripción**: Credenciales de conexión estándar para bases de datos como MySQL o PostgreSQL.

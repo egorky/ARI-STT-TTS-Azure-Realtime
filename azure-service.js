@@ -92,8 +92,13 @@ class AzureService extends EventEmitter {
         let recognizedText = '';
 
         this.sttRecognizer.recognizing = (s, e) => {
-            this.logger.debug(`Azure STT Intermediate result: ${e.result.text}`);
-            this.emit('recognizing', { text: e.result.text });
+            const resultText = e.result.text;
+            this.logger.debug(`Azure STT Intermediate result: ${resultText}`);
+            if (resultText && this.logger.isLevelEnabled('debug')) {
+                const jsonResponse = e.result.properties.getProperty(sdk.PropertyId.SpeechServiceResponse_Json);
+                this.logger.debug({ azureSttResponse: JSON.parse(jsonResponse) }, 'Received STT recognizing (intermediate) response from Azure');
+            }
+            this.emit('recognizing', { text: resultText });
         };
 
         this.sttRecognizer.recognized = (s, e) => {
