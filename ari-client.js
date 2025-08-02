@@ -88,23 +88,35 @@ class App {
     createCallConfig(dialplanVars, logger) {
         const callConfig = cloneDeep(config);
 
+        // This map defines the exact path in the config object for each dialplan variable.
+        const varToPathMap = {
+            'LOGGING_LEVEL': 'logging.level',
+            'PROMPT_MODE': 'app.prompt.mode',
+            'PLAYBACK_FILE_PATH': 'app.prompt.playbackPath',
+            'AZURE_TTS_LANGUAGE': 'azure.tts.language',
+            'AZURE_TTS_VOICE_NAME': 'azure.tts.voiceName',
+            'AZURE_STT_LANGUAGE': 'azure.stt.language',
+            'VAD_ACTIVATION_MODE': 'app.vad.activationMode'
+        };
+
         for (const [key, value] of Object.entries(dialplanVars)) {
             if (key.startsWith(DIALPLAN_VAR_PREFIX)) {
                 const configKey = key.substring(DIALPLAN_VAR_PREFIX.length);
-                // Convert from SCREAMING_SNAKE_CASE to dot.notation.path
-                const configPath = configKey.toLowerCase().replace(/_/g, '.');
+                const configPath = varToPathMap[configKey];
 
-                // Try to parse the value
-                let parsedValue = value;
-                try {
-                    // Attempt to parse as JSON (handles numbers, booleans, etc.)
-                    parsedValue = JSON.parse(value);
-                } catch (e) {
-                    // If parsing fails, use the raw string value.
+                if (configPath) {
+                    let parsedValue = value;
+                    try {
+                        parsedValue = JSON.parse(value);
+                    } catch (e) {
+                        // Keep as string if parsing fails
+                    }
+
+                    logger.info(`Overriding config: '${configPath}' with value '${parsedValue}'`);
+                    set(callConfig, configPath, parsedValue);
+                } else {
+                    logger.warn(`Unknown config override variable: ${key}`);
                 }
-
-                logger.info(`Overriding config: '${configPath}' with value '${parsedValue}'`);
-                set(callConfig, configPath, parsedValue);
             }
         }
 
@@ -275,7 +287,10 @@ class App {
     }
 
     async handlePrompt(callState, textToSpeak) {
-        if (callState.config.app.prompt.mode === 'playback') {
+        const { logger, config: callConfig } = callState;
+        logger.debug(`Handling prompt with mode: ${callConfig.app.prompt.mode}`);
+
+        if (callConfig.app.prompt.mode === 'playback') {
             await this.playFileAudio(callState);
         } else {
             await this.streamTtsAudio(callState, textToSpeak);
