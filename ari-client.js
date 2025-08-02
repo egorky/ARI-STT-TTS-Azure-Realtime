@@ -58,7 +58,7 @@ class App {
     async getDialplanVariables(channel, logger) {
         try {
             const channelVars = await channel.getChannelVars();
-            logger.info({ channelVars }, 'Received channel variables from Asterisk');
+            logger.debug({ channelVars }, 'Received all channel variables from Asterisk');
             return channelVars;
         } catch (err) {
             // It's possible getChannelVars() isn't supported or fails.
@@ -286,6 +286,7 @@ class App {
 
         try {
             const playback = this.ariClient.Playback();
+            callState.playbackId = playback.id; // Save the playback ID
             const playbackFinished = new Promise(resolve => playback.once('PlaybackFinished', resolve));
 
             // Activate VAD based on config
@@ -293,7 +294,7 @@ class App {
                 setTimeout(() => this.enableTalkDetection(callState), callConfig.app.vad.activationDelay);
             }
 
-            await userBridge.play({ media: `sound:${filePath}`, playbackId: playback.id });
+            await userBridge.play({ media: `sound:${filePath}`, playbackId: callState.playbackId });
             await playbackFinished;
 
             if (callConfig.app.vad.activationMode === 'after_prompt_end') {
@@ -348,7 +349,9 @@ class App {
                     callState.logger.info(`Queueing chunk ${tempAudioFile.filePath} for playback.`);
 
                     const playback = this.ariClient.Playback();
+                    callState.playbackId = playback.id; // Save the playback ID for barge-in
                     playback.once('PlaybackFinished', () => {
+                        callState.playbackId = null; // Clear the ID when done
                         callState.logger.info(`Finished playing chunk ${tempAudioFile.filePath}.`);
                         soundManager.cleanupTempAudio(tempAudioFile.filePath, callState.logger); // Fire-and-forget
                         processing = false;
@@ -427,16 +430,14 @@ class App {
             // We remove the listener immediately to prevent re-entry.
             mainChannel.removeListener('ChannelTalkingStarted', onTalkingStarted);
 
-            if (callState.isPlayingPrompt) {
-                logger.info('Barge-in detected. Stopping prompt playback.');
+            if (callState.isPlayingPrompt && callState.playbackId) {
+                logger.info(`Barge-in detected. Stopping prompt playback ID ${callState.playbackId}.`);
                 callState.isPlayingPrompt = false; // Stop the prompt loop
-                if (userBridge) {
-                    try {
-                        // Stop any currently playing audio on the bridge
-                        await userBridge.stopMoh();
-                    } catch (e) {
-                         // ignore if no playback
-                    }
+                try {
+                    await this.ariClient.playbacks.stop({ playbackId: callState.playbackId });
+                } catch (e) {
+                    // This can fail if the playback already finished, which is fine.
+                    logger.warn(`Could not stop playback ${callState.playbackId}, it may have already finished.`);
                 }
             }
 
@@ -493,11 +494,13 @@ class App {
                 }
 
                 // Barge-in for DTMF
-                if (callState.isPlayingPrompt) {
-                    logger.info('DTMF Barge-in detected. Stopping prompt playback.');
+                if (callState.isPlayingPrompt && callState.playbackId) {
+                    logger.info(`DTMF Barge-in detected. Stopping prompt playback ID ${callState.playbackId}.`);
                     callState.isPlayingPrompt = false;
-                    if (userBridge) {
-                        try { await userBridge.stopMoh(); } catch (e) { /* ignore */ }
+                    try {
+                        await this.ariClient.playbacks.stop({ playbackId: callState.playbackId });
+                    } catch (e) {
+                        logger.warn(`Could not stop playback ${callState.playbackId} for DTMF, it may have already finished.`);
                     }
                 }
             }

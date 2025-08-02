@@ -19,7 +19,8 @@ const getTimestamp = () => {
 };
 
 const log = (level, context, ...args) => {
-    if (LOG_LEVELS[level] < currentLogLevel) {
+    const levelValue = LOG_LEVELS[level.toLowerCase()];
+    if (levelValue === undefined || levelValue < currentLogLevel) {
         return;
     }
 
@@ -51,6 +52,8 @@ const createLogger = (context = null) => ({
         if (targetLevel === undefined) {
             return false;
         }
+        // This is the correct logic. A logger shows messages of its level or higher (more severe).
+        // So, we check if the message's level value is >= the configured level value.
         return targetLevel >= currentLogLevel;
     }
 });
