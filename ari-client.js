@@ -203,14 +203,13 @@ class App {
         azureService.startContinuousRecognition();
 
         azureService.once('recognitionEnded', (result) => {
-            callState.finalTranscript = result.finalText;
-            logger.info(`Final transcript: ${result.finalText}`);
-            recognitionResolve();
+            logger.info(`Recognition ended. Final transcript: ${result.finalText}`);
+            recognitionResolve(result.finalText || ''); // Resolve with the final text
         });
 
         azureService.on('recognitionError', (err) => {
             logger.error(`STT Error:`, err);
-            recognitionResolve(); // Resolve even on error to unblock the call flow
+            recognitionResolve(''); // Resolve with an empty string on error to unblock the call flow
         });
 
         return streamReadyPromise;
@@ -462,7 +461,10 @@ class App {
             // Now, start sending real-time audio
             callState.isRecognizing = true;
 
-            await callState.recognitionPromise;
+            const finalText = await callState.recognitionPromise;
+            callState.finalTranscript = finalText;
+            logger.info(`Final transcript to be saved: ${finalText}`);
+
             await this.continueInDialplan(callState);
         };
 
