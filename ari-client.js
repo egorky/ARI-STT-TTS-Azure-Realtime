@@ -66,6 +66,7 @@ class App {
 
             // Fallback to a predefined list of variables
             const varsToCheck = [
+                'LOGGING_LEVEL',
                 'AZURE_TTS_LANGUAGE', 'AZURE_TTS_VOICE_NAME', 'AZURE_STT_LANGUAGE',
                 'PROMPT_MODE', 'PLAYBACK_FILE_PATH', 'VAD_ACTIVATION_MODE'
             ];
