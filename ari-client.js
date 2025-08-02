@@ -107,6 +107,8 @@ class App {
                 set(callConfig, configPath, parsedValue);
             }
         }
+
+        logger.debug({ finalConfig: callConfig }, 'Final configuration for the call');
         return callConfig;
     }
 
@@ -115,17 +117,21 @@ class App {
         const callerId = channel.caller.number;
         const uniqueId = channel.id; // Use the full, unique channel ID
 
-        // Get dialplan variables and create a call-specific config first
-        const initialLogger = createLogger({ context: { uniqueId, callerId }, config });
-        const dialplanVars = await this.getDialplanVariables(channel, initialLogger);
-        const callConfig = this.createCallConfig(dialplanVars, initialLogger);
+        // Create a temporary logger with default settings just for the setup phase.
+        const setupLogger = createLogger({ context: { uniqueId, callerId } });
 
-        // Now create the definitive logger for this call with the final config
+        // 1. Get all variables from the dialplan.
+        const dialplanVars = await this.getDialplanVariables(channel, setupLogger);
+
+        // 2. Create the final, call-specific configuration.
+        const callConfig = this.createCallConfig(dialplanVars, setupLogger);
+
+        // 3. Now, create the definitive logger for this call using the final configuration.
         const logger = createLogger({ context: { uniqueId, callerId }, config: callConfig });
 
         logger.info(`Incoming call`);
 
-        // Get dialplan variables and create a call-specific config
+        // 4. Proceed with handling the call using the final config and logger.
         const callState = {
             logger,
             mainChannel: channel,
