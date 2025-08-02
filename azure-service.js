@@ -13,6 +13,7 @@ class AzureService extends EventEmitter {
     constructor(config, logger) {
         super();
         this.logger = logger || createLogger();
+        this.config = config; // Store config for later use
         this.speechConfig = sdk.SpeechConfig.fromSubscription(config.azure.subscriptionKey, config.azure.region);
 
         // TTS Configuration
@@ -50,9 +51,14 @@ class AzureService extends EventEmitter {
             const audioConfig = sdk.AudioConfig.fromStreamOutput(pushStream);
             const synthesizer = new sdk.SpeechSynthesizer(this.speechConfig, audioConfig);
 
-            synthesizer.speakTextAsync(
-                text,
+            // Construct SSML for detailed logging
+            const ssml = `<speak version='1.0' xml:lang='${this.config.azure.tts.language}'><voice xml:lang='${this.config.azure.tts.language}' xml:gender='Female' name='${this.config.azure.tts.voiceName}'>${text}</voice></speak>`;
+            this.logger.debug({ ssml: ssml }, 'Sending SSML to Azure for TTS');
+
+            synthesizer.speakSsmlAsync( // Use speakSsmlAsync to be explicit
+                ssml,
                 result => {
+                    this.logger.debug({ ttsResult: result }, 'Received TTS result from Azure');
                     if (result.reason === sdk.ResultReason.SynthesizingAudioCompleted) {
                         this.logger.info("Azure TTS synthesis completed.");
                     } else {
@@ -86,13 +92,17 @@ class AzureService extends EventEmitter {
         let recognizedText = '';
 
         this.sttRecognizer.recognizing = (s, e) => {
-            this.logger.info(`Azure STT Intermediate result: ${e.result.text}`);
+            this.logger.debug(`Azure STT Intermediate result: ${e.result.text}`);
             this.emit('recognizing', { text: e.result.text });
         };
 
         this.sttRecognizer.recognized = (s, e) => {
             if (e.result.reason === sdk.ResultReason.RecognizedSpeech) {
                 this.logger.info(`Azure STT Final result: ${e.result.text}`);
+                if (this.logger.isLevelEnabled('debug')) {
+                    const jsonResponse = e.result.properties.getProperty(sdk.PropertyId.SpeechServiceResponse_Json);
+                    this.logger.debug({ azureSttResponse: JSON.parse(jsonResponse) }, 'Received STT recognized response from Azure');
+                }
                 if (e.result.text) {
                     recognizedText += e.result.text + ' ';
                 }
@@ -103,6 +113,10 @@ class AzureService extends EventEmitter {
             this.logger.error(`Azure STT Canceled: ${e.reason}`);
             if (e.reason === sdk.CancellationReason.Error) {
                 this.logger.error(`Cancellation Details: ${e.errorDetails}`);
+                if (this.logger.isLevelEnabled('debug')) {
+                    const jsonResponse = e.result.properties.getProperty(sdk.PropertyId.SpeechServiceResponse_Json);
+                    this.logger.debug({ azureSttResponse: JSON.parse(jsonResponse) }, 'Received STT cancellation response from Azure');
+                }
             }
             this.emit('recognitionError', new Error(e.errorDetails));
             this.stopContinuousRecognition();
@@ -110,8 +124,17 @@ class AzureService extends EventEmitter {
 
         this.sttRecognizer.sessionStopped = (s, e) => {
             this.logger.info("Azure STT session stopped.");
-            this.emit('recognitionEnded', { finalText: recognizedText.trim() });
-            this.stopContinuousRecognition();
+            // When the session stops, we can be sure all 'recognized' events have fired.
+            this.sttRecognizer.stopContinuousRecognitionAsync(() => {
+                this.logger.info(`Final accumulated transcript: "${recognizedText.trim()}"`);
+                this.emit('recognitionEnded', { finalText: recognizedText.trim() });
+                if (this.sttPushStream) {
+                    this.sttPushStream.close();
+                    this.sttPushStream = null;
+                }
+                this.sttRecognizer.close();
+                this.sttRecognizer = null;
+            });
         };
 
         this.sttRecognizer.startContinuousRecognitionAsync(
@@ -130,15 +153,10 @@ class AzureService extends EventEmitter {
      * Stops the continuous speech recognition session.
      */
     stopContinuousRecognition() {
+        // This function will signal the recognizer to stop.
+        // The actual cleanup and event emission will happen in the sessionStopped event handler.
         if (this.sttRecognizer) {
-            this.sttRecognizer.stopContinuousRecognitionAsync(() => {
-                this.sttRecognizer.close();
-                this.sttRecognizer = null;
-            });
-        }
-        if (this.sttPushStream) {
-            this.sttPushStream.close();
-            this.sttPushStream = null;
+            this.sttRecognizer.stopContinuousRecognitionAsync();
         }
     }
 }
