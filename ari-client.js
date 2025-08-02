@@ -11,7 +11,7 @@ const config = require('./config');
 const createLogger = require('./logger');
 const db = require('./database');
 
-const logger = createLogger(); // Global logger for app-level events
+const logger = createLogger({ config }); // Global logger for app-level events
 const DIALPLAN_VAR_PREFIX = 'APP_VAR_';
 
 class App {
@@ -114,14 +114,18 @@ class App {
     async handleCall(channel) {
         const callerId = channel.caller.number;
         const uniqueId = channel.id; // Use the full, unique channel ID
-        const logger = createLogger({ uniqueId, callerId });
+
+        // Get dialplan variables and create a call-specific config first
+        const initialLogger = createLogger({ context: { uniqueId, callerId }, config });
+        const dialplanVars = await this.getDialplanVariables(channel, initialLogger);
+        const callConfig = this.createCallConfig(dialplanVars, initialLogger);
+
+        // Now create the definitive logger for this call with the final config
+        const logger = createLogger({ context: { uniqueId, callerId }, config: callConfig });
 
         logger.info(`Incoming call`);
 
         // Get dialplan variables and create a call-specific config
-        const dialplanVars = await this.getDialplanVariables(channel, logger);
-        const callConfig = this.createCallConfig(dialplanVars, logger);
-
         const callState = {
             logger,
             mainChannel: channel,
