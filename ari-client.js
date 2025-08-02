@@ -2,6 +2,7 @@
 
 const AriClient = require('ari-client');
 const { v4: uuidv4 } = require('uuid');
+const { cloneDeep, set } = require('lodash');
 const RtpServer = require('./rtp-server');
 const AzureService = require('./azure-service');
 const { ulawToPcm } = require('./audio-converter');
@@ -11,6 +12,7 @@ const createLogger = require('./logger');
 const db = require('./database');
 
 const logger = createLogger(); // Global logger for app-level events
+const DIALPLAN_VAR_PREFIX = 'APP_VAR_';
 
 class App {
     constructor() {
@@ -32,7 +34,7 @@ class App {
                     channel.answer().catch(err => createLogger().error(`Failed to answer internal channel ${channel.id}:`, err));
                     return;
                 }
-                this.handleCall(channel);
+                this.handleCall(channel, event.channel.dialplan);
             });
 
             this.ariClient.on('StasisEnd', (event, channel) => {
@@ -53,16 +55,78 @@ class App {
         }
     }
 
+    async getDialplanVariables(channel, logger) {
+        try {
+            const channelVars = await channel.getChannelVars();
+            logger.info({ channelVars }, 'Received channel variables from Asterisk');
+            return channelVars;
+        } catch (err) {
+            // It's possible getChannelVars() isn't supported or fails.
+            logger.warn('Could not retrieve all channel variables with getChannelVars(). This may be expected depending on your Asterisk version. Falling back to predefined list.', err);
+
+            // Fallback to a predefined list of variables
+            const varsToCheck = [
+                'AZURE_TTS_LANGUAGE', 'AZURE_TTS_VOICE_NAME', 'AZURE_STT_LANGUAGE',
+                'PROMPT_MODE', 'PLAYBACK_FILE_PATH', 'VAD_ACTIVATION_MODE'
+            ];
+            const channelVars = {};
+            for (const v of varsToCheck) {
+                try {
+                    const fullVarName = `${DIALPLAN_VAR_PREFIX}${v}`;
+                    const result = await channel.getChannelVar({ variable: fullVarName });
+                    if (result && result.value) {
+                        channelVars[fullVarName] = result.value;
+                    }
+                } catch (e) {
+                    // This is expected if the variable is not set, so we don't log an error.
+                }
+            }
+            return channelVars;
+        }
+    }
+
+    createCallConfig(dialplanVars, logger) {
+        const callConfig = cloneDeep(config);
+
+        for (const [key, value] of Object.entries(dialplanVars)) {
+            if (key.startsWith(DIALPLAN_VAR_PREFIX)) {
+                const configKey = key.substring(DIALPLAN_VAR_PREFIX.length);
+                // Convert from SCREAMING_SNAKE_CASE to dot.notation.path
+                const configPath = configKey.toLowerCase().replace(/_/g, '.');
+
+                // Try to parse the value
+                let parsedValue = value;
+                try {
+                    // Attempt to parse as JSON (handles numbers, booleans, etc.)
+                    parsedValue = JSON.parse(value);
+                } catch (e) {
+                    // If parsing fails, use the raw string value.
+                }
+
+                logger.info(`Overriding config: '${configPath}' with value '${parsedValue}'`);
+                set(callConfig, configPath, parsedValue);
+            }
+        }
+        return callConfig;
+    }
+
+
     async handleCall(channel) {
         const callerId = channel.caller.number;
         const uniqueId = channel.id; // Use the full, unique channel ID
         const logger = createLogger({ uniqueId, callerId });
 
         logger.info(`Incoming call`);
+
+        // Get dialplan variables and create a call-specific config
+        const dialplanVars = await this.getDialplanVariables(channel, logger);
+        const callConfig = this.createCallConfig(dialplanVars, logger);
+
         const callState = {
             logger,
             mainChannel: channel,
-            azureService: new AzureService(config, logger),
+            config: callConfig,
+            azureService: new AzureService(callConfig, logger),
             userBridge: null,
             snoopChannel: null,
             snoopBridge: null,
@@ -89,11 +153,11 @@ class App {
 
         try {
             // Start session timeout
-            if (config.app.timeouts.session > 0) {
+            if (callConfig.app.timeouts.session > 0) {
                 callState.timers.session = setTimeout(() => {
                     logger.warn(`Session timeout reached for channel ${channel.id}. Hanging up.`);
                     channel.hangup().catch(e => logger.error(`Error hanging up channel on session timeout:`, e));
-                }, config.app.timeouts.session);
+                }, callConfig.app.timeouts.session);
             }
 
             await channel.answer();
@@ -153,7 +217,7 @@ class App {
     }
 
     async setupAudioSnooping(callState) {
-        const { mainChannel } = callState;
+        const { mainChannel, config: callConfig } = callState;
 
         // Create user bridge and add channel
         callState.userBridge = this.ariClient.Bridge();
@@ -163,7 +227,7 @@ class App {
 
         // Start RTP server
         callState.rtpServer = new RtpServer(callState.logger);
-        const rtpServerAddress = await callState.rtpServer.listen(config.rtpServer.ip, config.rtpServer.port);
+        const rtpServerAddress = await callState.rtpServer.listen(callConfig.rtpServer.ip, callConfig.rtpServer.port);
 
         callState.rtpServer.on('audioPacket', (audio) => {
             if (callState.isRecognizing && callState.sttPushStream) {
@@ -179,7 +243,7 @@ class App {
         callState.snoopChannel = await this.ariClient.channels.snoopChannelWithId({
             channelId: mainChannel.id,
             snoopId: snoopId,
-            app: config.ari.appName,
+            app: callConfig.ari.appName,
             spy: 'in',
             appArgs: 'internal' // Mark this channel as internal
         });
@@ -187,9 +251,9 @@ class App {
 
         // Create external media channel
         callState.externalMediaChannel = await this.ariClient.channels.externalMedia({
-            app: config.ari.appName,
+            app: callConfig.ari.appName,
             external_host: `${rtpServerAddress.address}:${rtpServerAddress.port}`,
-            format: config.rtpServer.audioFormat,
+            format: callConfig.rtpServer.audioFormat,
             appArgs: 'internal' // Mark this channel as internal
         });
         callState.logger.info(`External media channel ${callState.externalMediaChannel.id} created.`);
@@ -202,7 +266,7 @@ class App {
     }
 
     async handlePrompt(callState, textToSpeak) {
-        if (config.app.prompt.mode === 'playback') {
+        if (callState.config.app.prompt.mode === 'playback') {
             await this.playFileAudio(callState);
         } else {
             await this.streamTtsAudio(callState, textToSpeak);
@@ -210,14 +274,15 @@ class App {
     }
 
     async playFileAudio(callState) {
-        const { mainChannel, userBridge, logger } = callState;
-        const filePath = config.app.prompt.playbackPath;
+        const { mainChannel, userBridge, logger, config: callConfig } = callState;
+        const filePath = callConfig.app.prompt.playbackPath;
         if (!filePath) {
             logger.error('Prompt mode is "playback" but PLAYBACK_FILE_PATH is not set.');
             return;
         }
 
         logger.info(`Playing audio file: ${filePath}`);
+        callState.synthesizedAudioPath = filePath; // Save the path for DB logging
         callState.isPlayingPrompt = true;
 
         try {
@@ -225,14 +290,14 @@ class App {
             const playbackFinished = new Promise(resolve => playback.once('PlaybackFinished', resolve));
 
             // Activate VAD based on config
-            if (config.app.vad.activationMode === 'after_prompt_start') {
-                setTimeout(() => this.enableTalkDetection(callState), config.app.vad.activationDelay);
+            if (callConfig.app.vad.activationMode === 'after_prompt_start') {
+                setTimeout(() => this.enableTalkDetection(callState), callConfig.app.vad.activationDelay);
             }
 
             await userBridge.play({ media: `sound:${filePath}`, playbackId: playback.id });
             await playbackFinished;
 
-            if (config.app.vad.activationMode === 'after_prompt_end') {
+            if (callConfig.app.vad.activationMode === 'after_prompt_end') {
                 this.enableTalkDetection(callState);
             }
 
@@ -245,7 +310,7 @@ class App {
     }
 
     async streamTtsAudio(callState, text) {
-        const { mainChannel, userBridge, logger, azureService } = callState;
+        const { mainChannel, userBridge, logger, azureService, config: callConfig } = callState;
         logger.info(`Synthesizing and playing prompt: "${text}"`);
         callState.isPlayingPrompt = true;
 
@@ -272,9 +337,9 @@ class App {
                 }
                 processing = true;
 
-                if (!vadEnabled && config.app.vad.activationMode === 'after_prompt_start') {
+                if (!vadEnabled && callConfig.app.vad.activationMode === 'after_prompt_start') {
                     vadEnabled = true;
-                    setTimeout(() => this.enableTalkDetection(callState), config.app.vad.activationDelay);
+                    setTimeout(() => this.enableTalkDetection(callState), callConfig.app.vad.activationDelay);
                 }
 
                 const chunk = chunkQueue.shift();
@@ -328,7 +393,7 @@ class App {
             await streamEndPromise;
             logger.info(`All TTS chunks have been queued for playback.`);
 
-            if (config.app.vad.activationMode === 'after_prompt_end') {
+            if (callConfig.app.vad.activationMode === 'after_prompt_end') {
                 this.enableTalkDetection(callState);
             }
 
@@ -341,18 +406,18 @@ class App {
     }
 
     enableTalkDetection(callState) {
-        const { mainChannel, userBridge, rtpServer, logger } = callState;
+        const { mainChannel, userBridge, rtpServer, logger, config: callConfig } = callState;
         logger.info(`Enabling talk detection.`);
 
         // Start pre-buffering audio to catch the beginning of speech
-        rtpServer.startPreBuffering(config.rtpServer.preBufferSize);
+        rtpServer.startPreBuffering(callConfig.rtpServer.preBufferSize);
 
         // Start no-input timer
-        if (config.app.timeouts.noInput > 0) {
+        if (callConfig.app.timeouts.noInput > 0) {
             callState.timers.noInput = setTimeout(() => {
                 logger.warn(`No-input timeout reached. Hanging up.`);
                 mainChannel.hangup().catch(e => logger.error(`Error hanging up channel on no-input timeout:`, e));
-            }, config.app.timeouts.noInput);
+            }, callConfig.app.timeouts.noInput);
         }
 
         const onTalkingStarted = async () => {
@@ -444,19 +509,19 @@ class App {
             callState.timers.dtmf = setTimeout(async () => {
                 logger.info(`DTMF completion timeout reached. Final digits: ${callState.dtmfDigits}`);
                 await this.continueInDialplan(callState);
-            }, config.app.dtmf.completionTimeout);
+            }, callConfig.app.dtmf.completionTimeout);
         };
 
         // Assign listeners
         mainChannel.on('ChannelTalkingStarted', onTalkingStarted);
         mainChannel.on('ChannelTalkingFinished', onTalkingFinished);
-        if (config.app.dtmf.enabled) {
+        if (callConfig.app.dtmf.enabled) {
             mainChannel.on('ChannelDtmfReceived', onDtmfReceived);
         }
 
         // Setting TALK_DETECT values. Some Asterisk versions expect a positional format.
         // Format: "<silence_threshold>,<speech_threshold>"
-        const talkDetectValue = `${config.app.talkDetect.silenceThreshold},${config.app.talkDetect.speechThreshold}`;
+        const talkDetectValue = `${callConfig.app.talkDetect.silenceThreshold},${callConfig.app.talkDetect.speechThreshold}`;
 
         mainChannel.setChannelVar({
             variable: 'TALK_DETECT(set)',
