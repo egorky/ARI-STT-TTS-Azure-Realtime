@@ -118,7 +118,7 @@ class App {
         const uniqueId = channel.id; // Use the full, unique channel ID
 
         // Create a temporary logger with default settings just for the setup phase.
-        const setupLogger = createLogger({ context: { uniqueId, callerId } });
+        const setupLogger = createLogger({ context: { uniqueId, callerId }, config });
 
         // 1. Get all variables from the dialplan.
         const dialplanVars = await this.getDialplanVariables(channel, setupLogger);
