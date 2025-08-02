@@ -66,7 +66,7 @@ class App {
 
             // Fallback to a predefined list of variables
             const varsToCheck = [
-                'LOGGING_LEVEL',
+                'LOG_LEVEL',
                 'AZURE_TTS_LANGUAGE', 'AZURE_TTS_VOICE_NAME', 'AZURE_STT_LANGUAGE',
                 'PROMPT_MODE', 'PLAYBACK_FILE_PATH', 'VAD_ACTIVATION_MODE'
             ];
@@ -91,7 +91,7 @@ class App {
 
         // This map defines the exact path in the config object for each dialplan variable.
         const varToPathMap = {
-            'LOGGING_LEVEL': 'logging.level',
+            'LOG_LEVEL': 'logging.level',
             'PROMPT_MODE': 'app.prompt.mode',
             'PLAYBACK_FILE_PATH': 'app.prompt.playbackPath',
             'AZURE_TTS_LANGUAGE': 'azure.tts.language',
