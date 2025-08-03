@@ -104,12 +104,13 @@ class AzureService extends EventEmitter {
         this.sttRecognizer.recognized = (s, e) => {
             if (e.result.reason === sdk.ResultReason.RecognizedSpeech) {
                 this.logger.info(`Azure STT Final result: ${e.result.text}`);
+                // Append text first, to avoid race conditions from logging delays.
+                if (e.result.text) {
+                    recognizedText += e.result.text + ' ';
+                }
                 if (this.logger.isLevelEnabled('debug')) {
                     const jsonResponse = e.result.properties.getProperty(sdk.PropertyId.SpeechServiceResponse_Json);
                     this.logger.debug({ azureSttResponse: JSON.parse(jsonResponse) }, 'Received STT recognized response from Azure');
-                }
-                if (e.result.text) {
-                    recognizedText += e.result.text + ' ';
                 }
             }
         };
@@ -129,20 +130,17 @@ class AzureService extends EventEmitter {
 
         this.sttRecognizer.sessionStopped = (s, e) => {
             this.logger.info("Azure STT session stopped.");
-            // The session has stopped. All 'recognized' events for the session should have been received.
-            // We can now emit the final accumulated text and clean up.
-            this.logger.info(`Final accumulated transcript: "${recognizedText.trim()}"`);
-            this.emit('recognitionEnded', { finalText: recognizedText.trim() });
-
-            // Clean up resources
-            if (this.sttPushStream) {
-                this.sttPushStream.close();
-                this.sttPushStream = null;
-            }
-            if (this.sttRecognizer) {
+            // When the session stops, we can be sure all 'recognized' events have fired.
+            this.sttRecognizer.stopContinuousRecognitionAsync(() => {
+                this.logger.info(`Final accumulated transcript: "${recognizedText.trim()}"`);
+                this.emit('recognitionEnded', { finalText: recognizedText.trim() });
+                if (this.sttPushStream) {
+                    this.sttPushStream.close();
+                    this.sttPushStream = null;
+                }
                 this.sttRecognizer.close();
                 this.sttRecognizer = null;
-            }
+            });
         };
 
         this.sttRecognizer.startContinuousRecognitionAsync(
