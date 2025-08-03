@@ -1,5 +1,6 @@
 'use strict';
 
+const fs = require('fs');
 const sdk = require('microsoft-cognitiveservices-speech-sdk');
 const EventEmitter = require('events');
 const { PassThrough } = require('stream');
@@ -88,6 +89,31 @@ class AzureService extends EventEmitter {
         this.sttPushStream = sdk.AudioInputStream.createPushStream(audioFormat);
         const audioConfig = sdk.AudioConfig.fromStreamInput(this.sttPushStream);
         this.sttRecognizer = new sdk.SpeechRecognizer(this.speechConfig, audioConfig);
+
+        // Add phrase list if provided
+        const phraseListFilePath = this.config.azure.stt.phraseListFilePath;
+        if (phraseListFilePath) {
+            try {
+                if (fs.existsSync(phraseListFilePath) && fs.statSync(phraseListFilePath).size > 0) {
+                    const phraseListData = fs.readFileSync(phraseListFilePath, 'utf8');
+                    const phrases = phraseListData.split('\n').map(p => p.trim()).filter(p => p.length > 0);
+
+                    if (phrases.length > 0) {
+                        const phraseListGrammar = sdk.PhraseListGrammar.fromRecognizer(this.sttRecognizer);
+                        for (const phrase of phrases) {
+                            phraseListGrammar.addPhrase(phrase);
+                        }
+                        this.logger.info(`Applied phrase list with ${phrases.length} phrases from ${phraseListFilePath}`);
+                    } else {
+                        this.logger.warn(`Phrase list file '${phraseListFilePath}' is empty or contains no valid phrases.`);
+                    }
+                } else {
+                    this.logger.warn(`Phrase list file not found or is empty: ${phraseListFilePath}`);
+                }
+            } catch (err) {
+                this.logger.error(`Error processing phrase list file '${phraseListFilePath}':`, err);
+            }
+        }
 
         let recognizedText = '';
 

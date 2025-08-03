@@ -105,6 +105,7 @@ class App {
             'AZURE_TTS_OUTPUT_FORMAT': 'azure.tts.outputFormat',
             // Azure STT
             'AZURE_STT_LANGUAGE': 'azure.stt.language',
+            'AZURE_STT_PHRASE_LIST_FILE_PATH': 'azure.stt.phraseListFilePath',
             // App Behavior
             'VAD_ACTIVATION_MODE': 'app.vad.activationMode',
             'VAD_ACTIVATION_DELAY_MS': 'app.vad.activationDelay',
