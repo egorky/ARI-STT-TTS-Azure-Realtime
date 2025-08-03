@@ -58,6 +58,10 @@ Parámetros para el reconocimiento de voz (lo que el usuario dice).
     -   **Descripción**: El código de lenguaje que se espera que el usuario hable.
     -   **Ejemplo**: `es-ES`, `en-US`
 
+-   **`AZURE_STT_PHRASE_LIST_FILE_PATH`**
+    -   **Descripción**: (Opcional) La ruta a un archivo de texto que contiene una lista de palabras o frases para mejorar la precisión del reconocimiento. Cada frase debe estar en una nueva línea.
+    -   **Ejemplo**: `/path/to/my/phrases.txt`
+
 ## 5. Comportamiento de la Aplicación
 
 Variables que controlan la lógica interna de la aplicación.
