@@ -89,15 +89,69 @@ class App {
     createCallConfig(dialplanVars, logger) {
         const callConfig = cloneDeep(config);
 
-        // This map defines the exact path in the config object for each dialplan variable.
         const varToPathMap = {
-            'LOG_LEVEL': 'logging.level',
-            'PROMPT_MODE': 'app.prompt.mode',
-            'PLAYBACK_FILE_PATH': 'app.prompt.playbackPath',
+            // ARI
+            'ARI_URL': 'ari.url',
+            'ARI_USERNAME': 'ari.username',
+            'ARI_PASSWORD': 'ari.password',
+            'ARI_APP_NAME': 'ari.appName',
+            // Azure General
+            'AZURE_SPEECH_SUBSCRIPTION_KEY': 'azure.subscriptionKey',
+            'AZURE_SPEECH_REGION': 'azure.region',
+            // Azure TTS
             'AZURE_TTS_LANGUAGE': 'azure.tts.language',
             'AZURE_TTS_VOICE_NAME': 'azure.tts.voiceName',
+            'AZURE_TTS_OUTPUT_FORMAT': 'azure.tts.outputFormat',
+            // Azure STT
             'AZURE_STT_LANGUAGE': 'azure.stt.language',
-            'VAD_ACTIVATION_MODE': 'app.vad.activationMode'
+            // App Behavior
+            'VAD_ACTIVATION_MODE': 'app.vad.activationMode',
+            'VAD_ACTIVATION_DELAY_MS': 'app.vad.activationDelay',
+            'TALK_DETECT_SILENCE_THRESHOLD': 'app.talkDetect.silenceThreshold',
+            'TALK_DETECT_SPEECH_THRESHOLD': 'app.talkDetect.speechThreshold',
+            'PROMPT_MODE': 'app.prompt.mode',
+            'PLAYBACK_FILE_PATH': 'app.prompt.playbackPath',
+            // Timeouts
+            'ARI_SESSION_TIMEOUT_MS': 'app.timeouts.session',
+            'NO_INPUT_TIMEOUT_MS': 'app.timeouts.noInput',
+            // RTP
+            'RTP_PREBUFFER_SIZE': 'rtpServer.preBufferSize',
+            // DTMF
+            'ENABLE_DTMF': 'app.dtmf.enabled',
+            'DTMF_COMPLETION_TIMEOUT_MS': 'app.dtmf.completionTimeout',
+            // External Media Server
+            'EXTERNAL_MEDIA_SERVER_IP': 'rtpServer.ip',
+            'EXTERNAL_MEDIA_SERVER_PORT': 'rtpServer.port',
+            'EXTERNAL_MEDIA_AUDIO_FORMAT': 'rtpServer.audioFormat',
+            // Logging
+            'LOG_LEVEL': 'logging.level',
+            // Database
+            'DB_DIALECT': 'database.dialect',
+            'DB_STORAGE': 'database.storage',
+            'DB_HOST': 'database.host',
+            'DB_PORT': 'database.port',
+            'DB_USER': 'database.username',
+            'DB_PASSWORD': 'database.password',
+            'DB_DATABASE': 'database.database',
+        };
+
+        const parseDialplanValue = (key, value) => {
+            const intKeys = [
+                'VAD_ACTIVATION_DELAY_MS', 'TALK_DETECT_SILENCE_THRESHOLD',
+                'TALK_DETECT_SPEECH_THRESHOLD', 'ARI_SESSION_TIMEOUT_MS',
+                'NO_INPUT_TIMEOUT_MS', 'RTP_PREBUFFER_SIZE',
+                'DTMF_COMPLETION_TIMEOUT_MS', 'EXTERNAL_MEDIA_SERVER_PORT', 'DB_PORT'
+            ];
+            const boolKeys = ['ENABLE_DTMF'];
+
+            if (intKeys.includes(key)) {
+                const num = parseInt(value, 10);
+                return isNaN(num) ? null : num;
+            }
+            if (boolKeys.includes(key)) {
+                return value.toLowerCase() === 'true';
+            }
+            return value;
         };
 
         for (const [key, value] of Object.entries(dialplanVars)) {
@@ -106,17 +160,15 @@ class App {
                 const configPath = varToPathMap[configKey];
 
                 if (configPath) {
-                    let parsedValue = value;
-                    try {
-                        parsedValue = JSON.parse(value);
-                    } catch (e) {
-                        // Keep as string if parsing fails
+                    const parsedValue = parseDialplanValue(configKey, value);
+                    if (parsedValue !== null) {
+                        logger.info(`Overriding config from dialplan: '${configPath}' with value '${parsedValue}'`);
+                        set(callConfig, configPath, parsedValue);
+                    } else {
+                        logger.warn(`Could not parse value for dialplan variable ${key}: '${value}'`);
                     }
-
-                    logger.info(`Overriding config: '${configPath}' with value '${parsedValue}'`);
-                    set(callConfig, configPath, parsedValue);
                 } else {
-                    logger.warn(`Unknown config override variable: ${key}`);
+                    logger.warn(`Unknown config override variable from dialplan: ${key}`);
                 }
             }
         }

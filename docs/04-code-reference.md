@@ -20,8 +20,8 @@ Este documento proporciona una descripción detallada de cada archivo y función
 
 ## 3. `logger.js`
 
--   **Propósito**: Proporcionar un sistema de logging estandarizado con timestamps.
--   **Descripción**: Exporta un objeto `logger` con métodos (`info`, `warn`, `error`, `debug`). Cada vez que se llama a uno de estos métodos, se formatea el mensaje con un timestamp preciso (hasta el milisegundo) y un nivel de log, y luego se imprime en la consola.
+-   **Propósito**: Proporcionar un sistema de logging flexible y contextualizado.
+-   **Descripción**: Exporta una función `createLogger` que genera una instancia de logger. Esta instancia puede tener un contexto (como `uniqueId` y `callerId`) y una configuración específica. Esto permite que cada llamada tenga su propio logger con un nivel de log que puede ser sobrescrito desde el dialplan. El nivel de log se evalúa dinámicamente en cada llamada a un método de log (`debug`, `info`, `warn`, `error`).
 
 ---
 
@@ -31,19 +31,26 @@ Este documento proporciona una descripción detallada de cada archivo y función
 
 ### `class App`
 
--   **`constructor()`**: Inicializa las propiedades de la clase, incluyendo el cliente ARI, el servicio de Azure, un `Map` para las llamadas activas y un `Set` para los canales internos.
+-   **`constructor()`**: Inicializa las propiedades de la clase, incluyendo un `Map` para las llamadas activas (`activeCalls`).
 
 -   **`start()`**:
-    -   **Descripción**: Inicia la aplicación. Se conecta a ARI, registra los manejadores de eventos principales (`StasisStart`, `StasisEnd`) y pone la aplicación en modo de escucha.
+    -   **Descripción**: Inicia la aplicación. Se conecta a ARI, registra los manejadores de eventos principales (`StasisStart`, `StasisEnd`) y pone la aplicación en modo de escucha. Los canales creados internamente (snoop, etc.) se marcan con `appArgs: 'internal'` para ser ignorados por el listener `StasisStart`.
     -   **Retorna**: `Promise<void>`
 
--   **`isInternalChannel(channelId)`**:
-    -   **Descripción**: Comprueba si un `channelId` dado corresponde a un canal creado por la propia aplicación (snoop o external media).
-    -   **Parámetros**: `channelId` (string)
-    -   **Retorna**: `boolean`
+-   **`getDialplanVariables(channel, logger)`**:
+    -   **Descripción**: Obtiene todas las variables de canal de Asterisk. Intenta usar `getChannelVars` y, si falla, recurre a un método manual para variables predefinidas.
+    -   **Retorna**: `Promise<object>`
+
+-   **`createCallConfig(dialplanVars, logger)`**:
+    -   **Descripción**: Crea una configuración específica para la llamada actual. Clona la configuración global y la sobrescribe con cualquier variable `APP_VAR_*` encontrada en el dialplan. Contiene la lógica para parsear correctamente los valores (string, integer, boolean).
+    -   **Retorna**: `object` - El objeto de configuración final para la llamada.
 
 -   **`handleCall(channel)`**:
-    -   **Descripción**: Es el corazón de la lógica de una llamada individual. Se ejecuta para cada nueva llamada que entra en la aplicación. Gestiona todo el ciclo de vida: respuesta, configuración de timeouts, snooping, reproducción de prompt y espera pasiva.
+    -   **Descripción**: Es el corazón de la lógica de una llamada individual. Se ejecuta para cada nueva llamada. Gestiona todo el ciclo de vida:
+        1. Obtiene las variables del dialplan.
+        2. Crea una configuración y un logger específicos para la llamada.
+        3. Responde la llamada, configura timeouts, y prepara el `callState`.
+        4. Inicia el snooping de audio y el manejo del prompt.
     -   **Parámetros**: `channel` (object - Cliente ARI)
     -   **Retorna**: `Promise<void>`
 
@@ -57,17 +64,28 @@ Este documento proporciona una descripción detallada de cada archivo y función
     -   **Parámetros**: `callState` (object)
     -   **Retorna**: `Promise<void>`
 
--   **`playTtsAudio(callState, text)`**:
-    -   **Descripción**: Gestiona la reproducción del prompt en modo streaming. Recibe chunks de audio de Azure, los guarda como archivos temporales, los encola para su reproducción en ARI y los limpia después. También gestiona la lógica para el "barge-in".
+-   **`handlePrompt(callState, textToSpeak)`**:
+    -   **Descripción**: Orquesta el manejo del prompt inicial según el `PROMPT_MODE` configurado. Llama a `playFileAudio` o `streamTtsAudio`.
+    -   **Parámetros**: `callState` (object), `textToSpeak` (string)
+
+-   **`playFileAudio(callState)`**:
+    -   **Descripción**: Reproduce un archivo de audio pregrabado como prompt.
+    -   **Parámetros**: `callState` (object)
+
+-   **`streamTtsAudio(callState, text)`**:
+    -   **Descripción**: Gestiona la reproducción del prompt en modo streaming desde Azure TTS. Recibe chunks de audio, los guarda como archivos temporales, los encola para su reproducción en ARI y los limpia después. También gestiona la lógica para el "barge-in".
     -   **Parámetros**: `callState` (object), `text` (string)
-    -   **Retorna**: `Promise<void>`
 
 -   **`enableTalkDetection(callState)`**:
-    -   **Descripción**: Activa la detección de voz. Inicia el pre-buffering de RTP, el temporizador de no-input y registra los listeners para `ChannelTalkingStarted` y `ChannelTalkingFinished`.
+    -   **Descripción**: Activa la detección de voz. Inicia el pre-buffering de RTP, el temporizador de no-input y registra los listeners para `ChannelTalkingStarted`, `ChannelTalkingFinished` y `ChannelDtmfReceived`.
+    -   **Parámetros**: `callState` (object)
+
+-   **`saveInteraction(callState)`**:
+    -   **Descripción**: Guarda la información de la interacción (transcripción, audio, etc.) en la base de datos.
     -   **Parámetros**: `callState` (object)
 
 -   **`continueInDialplan(callState)`**:
-    -   **Descripción**: Establece la variable `TRANSCRIPT` con el texto reconocido en el canal de Asterisk y devuelve el control de la llamada al dialplan.
+    -   **Descripción**: Guarda los resultados finales (voz o DTMF) y devuelve el control al dialplan de Asterisk. Establece las variables `TRANSCRIPT` o `DTMF_RESULT`, y `RECOGNITION_MODE`.
     -   **Parámetros**: `callState` (object)
     -   **Retorna**: `Promise<void>`
 
