@@ -1,0 +1,23 @@
+Cardiología
+Dermatología
+Endocrinología
+Gastroenterología
+Geriatría
+Ginecología
+Hematología
+Infectología
+Medicina interna
+Nefrología
+Neumología
+Neurología
+Oftalmología
+Oncología
+Otorrinolaringología
+Pediatría
+Psiquiatría
+Reumatología
+Traumatología
+Urología
+Anestesiología
+Radiología
+Fisiatría
