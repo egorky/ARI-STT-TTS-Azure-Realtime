@@ -173,7 +173,6 @@ class App {
             }
         }
 
-        logger.debug({ finalConfig: callConfig }, 'Final configuration for the call');
         return callConfig;
     }
 
@@ -193,6 +192,13 @@ class App {
 
         // 3. Now, create the definitive logger for this call using the final configuration.
         const logger = createLogger({ context: { uniqueId, callerId }, config: callConfig });
+
+        // Log the final configuration using the new logger, redacting sensitive data.
+        const redactedConfig = cloneDeep(callConfig);
+        if (redactedConfig.azure && redactedConfig.azure.subscriptionKey) {
+            redactedConfig.azure.subscriptionKey = '[REDACTED]';
+        }
+        logger.debug({ finalConfig: redactedConfig }, 'Final configuration for the call');
 
         logger.info(`Incoming call`);
 

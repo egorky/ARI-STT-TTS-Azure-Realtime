@@ -129,17 +129,20 @@ class AzureService extends EventEmitter {
 
         this.sttRecognizer.sessionStopped = (s, e) => {
             this.logger.info("Azure STT session stopped.");
-            // When the session stops, we can be sure all 'recognized' events have fired.
-            this.sttRecognizer.stopContinuousRecognitionAsync(() => {
-                this.logger.info(`Final accumulated transcript: "${recognizedText.trim()}"`);
-                this.emit('recognitionEnded', { finalText: recognizedText.trim() });
-                if (this.sttPushStream) {
-                    this.sttPushStream.close();
-                    this.sttPushStream = null;
-                }
+            // The session has stopped. All 'recognized' events for the session should have been received.
+            // We can now emit the final accumulated text and clean up.
+            this.logger.info(`Final accumulated transcript: "${recognizedText.trim()}"`);
+            this.emit('recognitionEnded', { finalText: recognizedText.trim() });
+
+            // Clean up resources
+            if (this.sttPushStream) {
+                this.sttPushStream.close();
+                this.sttPushStream = null;
+            }
+            if (this.sttRecognizer) {
                 this.sttRecognizer.close();
                 this.sttRecognizer = null;
-            });
+            }
         };
 
         this.sttRecognizer.startContinuousRecognitionAsync(
