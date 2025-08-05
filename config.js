@@ -27,6 +27,7 @@ const config = {
         },
         stt: {
             language: process.env.AZURE_STT_LANGUAGE || 'es-ES',
+            phraseListFilePath: process.env.AZURE_STT_PHRASE_LIST_FILE_PATH || '',
         },
     },
     app: {

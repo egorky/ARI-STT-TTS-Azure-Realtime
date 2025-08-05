@@ -1,5 +1,6 @@
 'use strict';
 
+const fs = require('fs');
 const sdk = require('microsoft-cognitiveservices-speech-sdk');
 const EventEmitter = require('events');
 const { PassThrough } = require('stream');
@@ -89,6 +90,31 @@ class AzureService extends EventEmitter {
         const audioConfig = sdk.AudioConfig.fromStreamInput(this.sttPushStream);
         this.sttRecognizer = new sdk.SpeechRecognizer(this.speechConfig, audioConfig);
 
+        // Add phrase list if provided
+        const phraseListFilePath = this.config.azure.stt.phraseListFilePath;
+        if (phraseListFilePath) {
+            try {
+                if (fs.existsSync(phraseListFilePath) && fs.statSync(phraseListFilePath).size > 0) {
+                    const phraseListData = fs.readFileSync(phraseListFilePath, 'utf8');
+                    const phrases = phraseListData.split('\n').map(p => p.trim()).filter(p => p.length > 0);
+
+                    if (phrases.length > 0) {
+                        const phraseListGrammar = sdk.PhraseListGrammar.fromRecognizer(this.sttRecognizer);
+                        for (const phrase of phrases) {
+                            phraseListGrammar.addPhrase(phrase);
+                        }
+                        this.logger.info(`Applied phrase list with ${phrases.length} phrases from ${phraseListFilePath}`);
+                    } else {
+                        this.logger.warn(`Phrase list file '${phraseListFilePath}' is empty or contains no valid phrases.`);
+                    }
+                } else {
+                    this.logger.warn(`Phrase list file not found or is empty: ${phraseListFilePath}`);
+                }
+            } catch (err) {
+                this.logger.error(`Error processing phrase list file '${phraseListFilePath}':`, err);
+            }
+        }
+
         let recognizedText = '';
 
         this.sttRecognizer.recognizing = (s, e) => {
@@ -104,12 +130,13 @@ class AzureService extends EventEmitter {
         this.sttRecognizer.recognized = (s, e) => {
             if (e.result.reason === sdk.ResultReason.RecognizedSpeech) {
                 this.logger.info(`Azure STT Final result: ${e.result.text}`);
+                // Append text first, to avoid race conditions from logging delays.
+                if (e.result.text) {
+                    recognizedText += e.result.text + ' ';
+                }
                 if (this.logger.isLevelEnabled('debug')) {
                     const jsonResponse = e.result.properties.getProperty(sdk.PropertyId.SpeechServiceResponse_Json);
                     this.logger.debug({ azureSttResponse: JSON.parse(jsonResponse) }, 'Received STT recognized response from Azure');
-                }
-                if (e.result.text) {
-                    recognizedText += e.result.text + ' ';
                 }
             }
         };
@@ -129,17 +156,20 @@ class AzureService extends EventEmitter {
 
         this.sttRecognizer.sessionStopped = (s, e) => {
             this.logger.info("Azure STT session stopped.");
-            // When the session stops, we can be sure all 'recognized' events have fired.
-            this.sttRecognizer.stopContinuousRecognitionAsync(() => {
-                this.logger.info(`Final accumulated transcript: "${recognizedText.trim()}"`);
-                this.emit('recognitionEnded', { finalText: recognizedText.trim() });
-                if (this.sttPushStream) {
-                    this.sttPushStream.close();
-                    this.sttPushStream = null;
-                }
+            // The session has stopped. All 'recognized' events for the session should have been received.
+            // We can now emit the final accumulated text and clean up.
+            this.logger.info(`Final accumulated transcript: "${recognizedText.trim()}"`);
+            this.emit('recognitionEnded', { finalText: recognizedText.trim() });
+
+            // Clean up resources
+            if (this.sttPushStream) {
+                this.sttPushStream.close();
+                this.sttPushStream = null;
+            }
+            if (this.sttRecognizer) {
                 this.sttRecognizer.close();
                 this.sttRecognizer = null;
-            });
+            }
         };
 
         this.sttRecognizer.startContinuousRecognitionAsync(

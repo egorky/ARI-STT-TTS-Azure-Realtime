@@ -28,13 +28,14 @@ class App {
             logger.info('Connected to Asterisk ARI');
 
             this.ariClient.on('StasisStart', (event, channel) => {
-                // Ignore channels that are marked as internal
-                if (event.args && event.args.includes('internal')) {
-                    createLogger().info(`Ignoring internal channel ${channel.id} entering Stasis.`);
-                    channel.answer().catch(err => createLogger().error(`Failed to answer internal channel ${channel.id}:`, err));
+                // Ignore channels that are marked as internal, or channels that don't have a caller property.
+                if ((event.args && event.args.includes('internal')) || !channel.caller.number) {
+                    createLogger({ config }).info(`Ignoring internal or caller-less channel ${channel.id} entering Stasis.`);
+                    // We answer these channels to ensure they are properly handled and don't get stuck.
+                    channel.answer().catch(err => createLogger({ config }).error(`Failed to answer internal channel ${channel.id}:`, err));
                     return;
                 }
-                this.handleCall(channel, event.channel.dialplan);
+                this.handleCall(channel);
             });
 
             this.ariClient.on('StasisEnd', (event, channel) => {
@@ -104,6 +105,7 @@ class App {
             'AZURE_TTS_OUTPUT_FORMAT': 'azure.tts.outputFormat',
             // Azure STT
             'AZURE_STT_LANGUAGE': 'azure.stt.language',
+            'AZURE_STT_PHRASE_LIST_FILE_PATH': 'azure.stt.phraseListFilePath',
             // App Behavior
             'VAD_ACTIVATION_MODE': 'app.vad.activationMode',
             'VAD_ACTIVATION_DELAY_MS': 'app.vad.activationDelay',
@@ -173,7 +175,6 @@ class App {
             }
         }
 
-        logger.debug({ finalConfig: callConfig }, 'Final configuration for the call');
         return callConfig;
     }
 
@@ -193,6 +194,13 @@ class App {
 
         // 3. Now, create the definitive logger for this call using the final configuration.
         const logger = createLogger({ context: { uniqueId, callerId }, config: callConfig });
+
+        // Log the final configuration using the new logger, redacting sensitive data.
+        const redactedConfig = cloneDeep(callConfig);
+        if (redactedConfig.azure && redactedConfig.azure.subscriptionKey) {
+            redactedConfig.azure.subscriptionKey = '[REDACTED]';
+        }
+        logger.debug({ finalConfig: redactedConfig }, 'Final configuration for the call');
 
         logger.info(`Incoming call`);
 
