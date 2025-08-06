@@ -12,9 +12,15 @@ const createLogger = (loggerConfig = { context: null, config: globalConfig }) =>
             target: 'pino-pretty',
             options: {
                 colorize: true,
+                sync: true, // Run in main thread to allow for function messageFormat
                 translateTime: 'SYS:yyyy-mm-dd HH:MM:ss.l',
-                // By removing messageFormat and ignore, we let pino-pretty
-                // use its default behavior which correctly handles child bindings.
+                ignore: 'pid,hostname,time', // Ignore original time, we use the translated one
+                messageFormat: (log, messageKey, levelLabel) => {
+                    const msg = log[messageKey];
+                    const uniqueId = log.uniqueId ? `[${log.uniqueId}]` : '';
+                    const callerId = log.callerId ? `[${log.callerId}]` : '';
+                    return `${levelLabel.toUpperCase()} ${uniqueId}${callerId} - ${msg}`;
+                },
             },
         },
     };
