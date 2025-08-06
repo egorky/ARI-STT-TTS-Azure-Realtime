@@ -288,6 +288,7 @@ class App {
 
         azureService.once('recognitionEnded', (result) => {
             logger.info(`Recognition ended. Final transcript: ${result.finalText}`);
+            callState.finalTranscript = result.finalText;
             callState.finalTranscriptDetailed = result.detailed;
             recognitionResolve(result.finalText || ''); // Resolve with the final text
         });
@@ -605,9 +606,8 @@ class App {
             // Now, start sending real-time audio
             callState.isRecognizing = true;
 
-            const finalText = await callState.recognitionPromise;
-            callState.finalTranscript = finalText;
-            logger.info(`Final transcript to be saved: ${finalText}`);
+            await callState.recognitionPromise;
+            logger.info(`Final transcript to be saved: ${callState.finalTranscript}`);
 
             await this.continueInDialplan(callState);
         };
