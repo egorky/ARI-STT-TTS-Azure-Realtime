@@ -15,7 +15,8 @@ const createLogger = (loggerConfig = { context: null, config: globalConfig }) =>
                 colorize: true,
                 translateTime: 'SYS:standard',
                 ignore: 'pid,hostname',
-                messageFormat: require(path.join(__dirname, 'logger-formatter.js')),
+                // Pass the path to the formatter file as a string
+                messageFormat: path.join(__dirname, 'logger-formatter.js'),
             },
         },
     };
