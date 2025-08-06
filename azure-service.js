@@ -26,6 +26,10 @@ class AzureService extends EventEmitter {
 
         // STT Configuration
         this.speechConfig.speechRecognitionLanguage = config.azure.stt.language;
+        if (config.azure.stt.outputFormat === 'detailed') {
+            this.speechConfig.outputFormat = sdk.OutputFormat.Detailed;
+            this.logger.info('Azure STT output format set to Detailed.');
+        }
 
         this.sttRecognizer = null;
         this.sttPushStream = null;
@@ -115,12 +119,12 @@ class AzureService extends EventEmitter {
             }
         }
 
-        let recognizedText = '';
+        const detailedResults = [];
 
         this.sttRecognizer.recognizing = (s, e) => {
             const resultText = e.result.text;
             this.logger.debug(`Azure STT Intermediate result: ${resultText}`);
-            if (resultText && this.logger.isLevelEnabled('debug')) {
+            if (resultText) {
                 const jsonResponse = e.result.properties.getProperty(sdk.PropertyId.SpeechServiceResponse_Json);
                 this.logger.debug({ azureSttResponse: JSON.parse(jsonResponse) }, 'Received STT recognizing (intermediate) response from Azure');
             }
@@ -130,14 +134,9 @@ class AzureService extends EventEmitter {
         this.sttRecognizer.recognized = (s, e) => {
             if (e.result.reason === sdk.ResultReason.RecognizedSpeech) {
                 this.logger.info(`Azure STT Final result: ${e.result.text}`);
-                // Append text first, to avoid race conditions from logging delays.
-                if (e.result.text) {
-                    recognizedText += e.result.text + ' ';
-                }
-                if (this.logger.isLevelEnabled('debug')) {
-                    const jsonResponse = e.result.properties.getProperty(sdk.PropertyId.SpeechServiceResponse_Json);
-                    this.logger.debug({ azureSttResponse: JSON.parse(jsonResponse) }, 'Received STT recognized response from Azure');
-                }
+                const jsonResult = e.result.json;
+                this.logger.debug({ azureSttResponse: JSON.parse(jsonResult) }, 'Received STT recognized response from Azure');
+                detailedResults.push(JSON.parse(jsonResult));
             }
         };
 
@@ -145,10 +144,8 @@ class AzureService extends EventEmitter {
             this.logger.error(`Azure STT Canceled: ${e.reason}`);
             if (e.reason === sdk.CancellationReason.Error) {
                 this.logger.error(`Cancellation Details: ${e.errorDetails}`);
-                if (this.logger.isLevelEnabled('debug')) {
-                    const jsonResponse = e.result.properties.getProperty(sdk.PropertyId.SpeechServiceResponse_Json);
-                    this.logger.debug({ azureSttResponse: JSON.parse(jsonResponse) }, 'Received STT cancellation response from Azure');
-                }
+                const jsonResponse = e.result.properties.getProperty(sdk.PropertyId.SpeechServiceResponse_Json);
+                this.logger.debug({ azureSttResponse: JSON.parse(jsonResponse) }, 'Received STT cancellation response from Azure');
             }
             this.emit('recognitionError', new Error(e.errorDetails));
             this.stopContinuousRecognition();
@@ -158,8 +155,12 @@ class AzureService extends EventEmitter {
             this.logger.info("Azure STT session stopped.");
             // The session has stopped. All 'recognized' events for the session should have been received.
             // We can now emit the final accumulated text and clean up.
-            this.logger.info(`Final accumulated transcript: "${recognizedText.trim()}"`);
-            this.emit('recognitionEnded', { finalText: recognizedText.trim() });
+            const finalText = detailedResults.map(r => r.DisplayText).join(' ').trim();
+            this.logger.info(`Final accumulated transcript: "${finalText}"`);
+            this.emit('recognitionEnded', {
+                finalText: finalText,
+                detailed: detailedResults
+            });
 
             // Clean up resources
             if (this.sttPushStream) {

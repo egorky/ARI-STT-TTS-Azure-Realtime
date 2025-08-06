@@ -62,7 +62,23 @@ Parámetros para el reconocimiento de voz (lo que el usuario dice).
     -   **Descripción**: (Opcional) La ruta a un archivo de texto que contiene una lista de palabras o frases para mejorar la precisión del reconocimiento. Cada frase debe estar en una nueva línea.
     -   **Ejemplo**: `/path/to/my/phrases.txt`
 
+-   **`AZURE_STT_OUTPUT_FORMAT`**
+    -   **Descripción**: Define el formato de la respuesta del servicio de reconocimiento de voz.
+    -   **Valores posibles**:
+        -   `simple`: Devuelve solo el texto transcrito.
+        -   `detailed`: Devuelve un objeto JSON detallado con múltiples interpretaciones del texto, confianza, etc.
+    -   **Default**: `simple`
+
 ## 5. Comportamiento de la Aplicación
+
+### Reproducción de TTS
+
+-   **`TTS_PLAYBACK_MODE`**
+    -   **Descripción**: Define cómo se reproduce el audio sintetizado por Azure.
+    -   **Valores posibles**:
+        -   `stream`: Reproduce cada chunk de audio a medida que llega de Azure. Más rápido para iniciar, ideal para prompts largos.
+        -   `full`: Espera a que se sintetice todo el audio y lo reproduce de una sola vez. Menor latencia de "barge-in" si el prompt es corto.
+    -   **Default**: `stream`
 
 Variables que controlan la lógica interna de la aplicación.
 

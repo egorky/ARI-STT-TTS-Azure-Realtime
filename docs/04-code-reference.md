@@ -85,7 +85,7 @@ Este documento proporciona una descripción detallada de cada archivo y función
     -   **Parámetros**: `callState` (object)
 
 -   **`continueInDialplan(callState)`**:
-    -   **Descripción**: Guarda los resultados finales (voz o DTMF) y devuelve el control al dialplan de Asterisk. Establece las variables `TRANSCRIPT` o `DTMF_RESULT`, y `RECOGNITION_MODE`.
+    -   **Descripción**: Guarda los resultados finales (voz o DTMF) y devuelve el control al dialplan de Asterisk. Establece las variables `TRANSCRIPT` o `DTMF_RESULT`, y `RECOGNITION_MODE`. Si el formato de STT es `detailed`, `TRANSCRIPT` contendrá un string JSON.
     -   **Parámetros**: `callState` (object)
     -   **Retorna**: `Promise<void>`
 
@@ -110,8 +110,8 @@ Este documento proporciona una descripción detallada de cada archivo y función
     -   **Retorna**: `Promise<PassThrough>` - Un stream de Node.js que emite los chunks de audio PCM.
 
 -   **`startContinuousRecognition()`**:
-    -   **Descripción**: Inicia una sesión de reconocimiento de voz continuo. Especifica el formato de audio esperado (8kHz, 16-bit, mono) y configura los callbacks para los eventos del reconocedor (`recognizing`, `recognized`, `canceled`, `sessionStopped`).
-    -   **Emite**: `audioStreamReady` (con el `pushStream`), `recognitionEnded` (con el texto final).
+    -   **Descripción**: Inicia una sesión de reconocimiento de voz continuo. Especifica el formato de audio esperado (8kHz, 16-bit, mono) y configura los callbacks para los eventos del reconocedor (`recognizing`, `recognized`, `canceled`, `sessionStopped`). El formato de salida puede ser `simple` o `detailed` según la configuración.
+    -   **Emite**: `audioStreamReady` (con el `pushStream`), `recognitionEnded` (con un objeto que contiene `finalText` y opcionalmente `detailed` con los resultados en JSON).
 
 -   **`stopContinuousRecognition()`**:
     -   **Descripción**: Detiene la sesión de reconocimiento de voz y cierra los recursos asociados.
