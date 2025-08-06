@@ -4,7 +4,7 @@
   "description": "ARI application to stream audio from Asterisk to Azure for STT and play TTS from Azure back to the caller.",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",
+    "start": "node index.js | pino-pretty -c -t 'SYS:standard' -f \"'['yyyy-mm-dd HH:MM:ss.l']' 'level' '['pid']' '['uniqueId'|'N/A']' '['callerId'|'N/A']' 'msg'\"",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
