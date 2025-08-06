@@ -4,7 +4,7 @@
   "description": "ARI application to stream audio from Asterisk to Azure for STT and play TTS from Azure back to the caller.",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js | pino-pretty -t 'SYS:yyyy-mm-dd HH:MM:ss.l' -l --ignore 'pid,hostname'",
+    "start": "node index.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
@@ -23,12 +23,8 @@
     "lodash": "^4.17.21",
     "microsoft-cognitiveservices-speech-sdk": "1.35.0",
     "mysql2": "^3.10.1",
-    "pino": "^9.7.0",
     "sequelize": "^6.37.3",
     "sqlite3": "^5.1.7",
     "uuid": "^9.0.1"
-  },
-  "devDependencies": {
-    "pino-pretty": "^13.1.1"
   }
 }
