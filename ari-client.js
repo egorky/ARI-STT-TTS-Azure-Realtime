@@ -724,8 +724,15 @@ class App {
                     await mainChannel.setChannelVar({ variable: 'DTMF_RESULT', value: callState.dtmfDigits });
                     await mainChannel.setChannelVar({ variable: 'RECOGNITION_MODE', value: 'DTMF' });
                 } else {
-                    const transcriptValue = callState.finalTranscriptDetailed ? JSON.stringify(callState.finalTranscriptDetailed) : callState.finalTranscript;
-                    await mainChannel.setChannelVar({ variable: 'TRANSCRIPT', value: transcriptValue });
+                    // Always set the simple transcript
+                    await mainChannel.setChannelVar({ variable: 'TRANSCRIPT', value: callState.finalTranscript });
+
+                    // Set the detailed JSON if it exists
+                    if (callState.finalTranscriptDetailed && callState.finalTranscriptDetailed.length > 0) {
+                        const detailedString = JSON.stringify(callState.finalTranscriptDetailed);
+                        await mainChannel.setChannelVar({ variable: 'TRANSCRIPT_DETAILED', value: detailedString });
+                    }
+
                     await mainChannel.setChannelVar({ variable: 'RECOGNITION_MODE', value: 'VOICE' });
                 }
                 await mainChannel.continueInDialplan();

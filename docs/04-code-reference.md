@@ -85,7 +85,11 @@ Este documento proporciona una descripción detallada de cada archivo y función
     -   **Parámetros**: `callState` (object)
 
 -   **`continueInDialplan(callState)`**:
-    -   **Descripción**: Guarda los resultados finales (voz o DTMF) y devuelve el control al dialplan de Asterisk. Establece las variables `TRANSCRIPT` o `DTMF_RESULT`, y `RECOGNITION_MODE`. Si el formato de STT es `detailed`, `TRANSCRIPT` contendrá un string JSON.
+    -   **Descripción**: Guarda los resultados finales (voz o DTMF) y devuelve el control al dialplan de Asterisk. Establece las variables de canal:
+        - `RECOGNITION_MODE`: 'VOICE' o 'DTMF'.
+        - `TRANSCRIPT`: El texto final transcrito (si el modo es 'VOICE').
+        - `TRANSCRIPT_DETAILED`: Un string JSON con el resultado detallado de Azure si `AZURE_STT_OUTPUT_FORMAT` es `detailed`.
+        - `DTMF_RESULT`: Los dígitos DTMF capturados (si el modo es 'DTMF').
     -   **Parámetros**: `callState` (object)
     -   **Retorna**: `Promise<void>`
 

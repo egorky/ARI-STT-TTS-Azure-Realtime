@@ -65,8 +65,8 @@ Parámetros para el reconocimiento de voz (lo que el usuario dice).
 -   **`AZURE_STT_OUTPUT_FORMAT`**
     -   **Descripción**: Define el formato de la respuesta del servicio de reconocimiento de voz.
     -   **Valores posibles**:
-        -   `simple`: Devuelve solo el texto transcrito.
-        -   `detailed`: Devuelve un objeto JSON detallado con múltiples interpretaciones del texto, confianza, etc.
+        -   `simple`: Devuelve solo el texto transcrito en la variable `TRANSCRIPT`.
+        -   `detailed`: Devuelve el texto transcrito en `TRANSCRIPT` y un objeto JSON detallado en la variable `TRANSCRIPT_DETAILED`.
     -   **Default**: `simple`
 
 ## 5. Comportamiento de la Aplicación
