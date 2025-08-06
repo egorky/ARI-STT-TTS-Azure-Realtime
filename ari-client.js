@@ -459,7 +459,7 @@ class App {
         let vadEnabled = false;
 
         const processQueue = async () => {
-            if (processing || chunkQueue.length === 0) {
+            if (processing || chunkQueue.length === 0 || !callState.isPlayingPrompt) {
                 if (streamFinished && chunkQueue.length === 0) {
                     resolveQueueEmpty();
                 }
