@@ -13,10 +13,8 @@ const createLogger = (loggerConfig = { context: null, config: globalConfig }) =>
             options: {
                 colorize: true,
                 translateTime: 'SYS:yyyy-mm-dd HH:MM:ss.l',
-                // This format includes time, level, context, and message.
-                messageFormat: '[{time}] {levelLabel} {if uniqueId}[{uniqueId}]{end}{if callerId}[{callerId}]{end} - {msg}',
-                // Ignore the original keys that are now part of the custom message format.
-                ignore: 'pid,hostname,time,level,uniqueId,callerId',
+                // By removing messageFormat and ignore, we let pino-pretty
+                // use its default behavior which correctly handles child bindings.
             },
         },
     };
