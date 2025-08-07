@@ -28,6 +28,7 @@ const config = {
         stt: {
             language: process.env.AZURE_STT_LANGUAGE || 'es-ES',
             phraseListFilePath: process.env.AZURE_STT_PHRASE_LIST_FILE_PATH || '',
+            outputFormat: process.env.AZURE_STT_OUTPUT_FORMAT || 'simple',
         },
     },
     app: {
@@ -42,6 +43,9 @@ const config = {
         prompt: {
             mode: process.env.PROMPT_MODE || 'tts',
             playbackPath: process.env.PLAYBACK_FILE_PATH || '',
+        },
+        tts: {
+            playbackMode: process.env.TTS_PLAYBACK_MODE || 'stream', // 'stream' or 'full'
         },
         timeouts: {
             session: parseInt(process.env.ARI_SESSION_TIMEOUT_MS, 10) || 60000,

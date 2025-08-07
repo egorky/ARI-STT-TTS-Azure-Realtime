@@ -23,6 +23,7 @@ graph TD
         E --> G(wav-helper.js);
         B --> H(logger.js);
         B --> I(config.js);
+        H -- utiliza --> P(pino);
     end
 
     subgraph "Servicios Externos"
@@ -63,11 +64,17 @@ sequenceDiagram
     App->>Asterisk: Answer()
     App->>Azure: Solicita TTS para el prompt
 
-    Azure-->>App: Empieza a enviar chunks de audio (TTS)
-
-    loop Para cada chunk de audio
-        App->>App: Guarda chunk como .wav temporal
-        App->>Asterisk: Playback(chunk.wav)
+    alt Modo Stream
+        Azure-->>App: Empieza a enviar chunks de audio (TTS)
+        loop Para cada chunk de audio
+            App->>App: Guarda chunk como .wav temporal
+            App->>Asterisk: Playback(chunk.wav)
+        end
+    else Modo Full
+        Azure-->>App: Envía stream completo de audio
+        App->>App: Espera a que llegue todo el audio
+        App->>App: Guarda audio completo como .wav temporal
+        App->>Asterisk: Playback(audio_completo.wav)
     end
 
     App->>App: Habilita TALK_DETECT

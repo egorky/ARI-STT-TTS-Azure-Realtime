@@ -184,7 +184,7 @@ class App {
         const uniqueId = channel.id; // Use the full, unique channel ID
 
         // Create a temporary logger with default settings just for the setup phase.
-        const setupLogger = createLogger({ context: { uniqueId, callerId }, config });
+        const setupLogger = createLogger({ context: { uniqueId, callerId }, config: config });
 
         // 1. Get all variables from the dialplan.
         const dialplanVars = await this.getDialplanVariables(channel, setupLogger);
@@ -218,6 +218,7 @@ class App {
             sttPushStream: null,
             isRecognizing: false,
             finalTranscript: '',
+            finalTranscriptDetailed: null,
             playback: null,
             recognitionPromise: null, // To await the final transcript
             isPlayingPrompt: false,
@@ -287,6 +288,8 @@ class App {
 
         azureService.once('recognitionEnded', (result) => {
             logger.info(`Recognition ended. Final transcript: ${result.finalText}`);
+            callState.finalTranscript = result.finalText;
+            callState.finalTranscriptDetailed = result.detailed;
             recognitionResolve(result.finalText || ''); // Resolve with the final text
         });
 
@@ -307,8 +310,8 @@ class App {
         await callState.userBridge.addChannel({ channel: mainChannel.id });
         callState.logger.info(`User bridge ${callState.userBridge.id} created.`);
 
-        // Start RTP server
-        callState.rtpServer = new RtpServer(callState.logger);
+        // Start RTP server, passing the pre-buffer size from config
+        callState.rtpServer = new RtpServer(callState.logger, callConfig.rtpServer.preBufferSize);
         const rtpServerAddress = await callState.rtpServer.listen(callConfig.rtpServer.ip, callConfig.rtpServer.port);
 
         callState.rtpServer.on('audioPacket', (audio) => {
@@ -397,99 +400,154 @@ class App {
 
     async streamTtsAudio(callState, text) {
         const { mainChannel, userBridge, logger, azureService, config: callConfig } = callState;
-        logger.info(`Synthesizing and playing prompt: "${text}"`);
+        logger.info(`Synthesizing prompt with mode '${callConfig.app.tts.playbackMode}': "${text}"`);
         callState.isPlayingPrompt = true;
 
         try {
             const ttsAudioStream = await azureService.synthesizeText(text);
-
-            let resolveStreamEnd;
-            const streamEndPromise = new Promise(resolve => {
-                resolveStreamEnd = resolve;
-            });
-
-            const chunkQueue = [];
             const allChunks = [];
-            let streamFinished = false;
-            let processing = false;
-            let vadEnabled = false;
 
-            const processQueue = async () => {
-                if (processing || chunkQueue.length === 0 || !callState.isPlayingPrompt) {
-                    if (streamFinished && chunkQueue.length === 0) {
-                        resolveStreamEnd();
+            const streamEndPromise = new Promise((resolve, reject) => {
+                ttsAudioStream.on('data', (chunk) => {
+                    if (chunk.length > 0) {
+                        allChunks.push(chunk);
                     }
-                    return;
-                }
-                processing = true;
-
-                if (!vadEnabled && callConfig.app.vad.activationMode === 'after_prompt_start') {
-                    vadEnabled = true;
-                    setTimeout(() => this.enableTalkDetection(callState), callConfig.app.vad.activationDelay);
-                }
-
-                const chunk = chunkQueue.shift();
-
-                try {
-                    const tempAudioFile = await soundManager.saveTempAudio(chunk, callState.logger);
-                    callState.logger.info(`Queueing chunk ${tempAudioFile.filePath} for playback.`);
-
-                    const playback = this.ariClient.Playback();
-                    callState.playbackId = playback.id; // Save the playback ID for barge-in
-                    playback.once('PlaybackFinished', () => {
-                        callState.playbackId = null; // Clear the ID when done
-                        callState.logger.info(`Finished playing chunk ${tempAudioFile.filePath}.`);
-                        soundManager.cleanupTempAudio(tempAudioFile.filePath, callState.logger); // Fire-and-forget
-                        processing = false;
-                        processQueue(); // Process next chunk
-                    });
-
-                    await userBridge.play({ media: tempAudioFile.soundUri, playbackId: playback.id });
-                } catch (err) {
-                    callState.logger.error('Error processing TTS audio chunk:', err);
-                    processing = false;
-                }
-            };
-
-            ttsAudioStream.on('data', (chunk) => {
-                if (chunk.length > 0) {
-                    chunkQueue.push(chunk);
-                    allChunks.push(chunk);
-                    processQueue();
-                }
+                });
+                ttsAudioStream.on('end', resolve);
+                ttsAudioStream.on('error', reject);
             });
 
-            ttsAudioStream.on('end', async () => {
-                callState.logger.info('TTS stream from Azure has ended.');
-                streamFinished = true;
-
-                // Save the full audio file as soon as the stream ends
-                const fullAudioBuffer = Buffer.concat(allChunks);
-            const finalAudioPath = await soundManager.saveFinalAudio(
-                fullAudioBuffer,
-                'tts',
-                { uniqueId: mainChannel.id, callerId: mainChannel.caller.number },
-                logger
-            );
-                callState.synthesizedAudioPath = finalAudioPath;
-
-                if (!processing && chunkQueue.length === 0) {
-                    resolveStreamEnd();
-                }
-            });
-
-            await streamEndPromise;
-            logger.info(`All TTS chunks have been queued for playback.`);
-
-            if (callConfig.app.vad.activationMode === 'after_prompt_end') {
-                this.enableTalkDetection(callState);
+            if (callConfig.app.tts.playbackMode === 'stream') {
+                await this.playTtsStream(callState, ttsAudioStream, allChunks, streamEndPromise);
+            } else {
+                await this.playTtsFull(callState, allChunks, streamEndPromise);
             }
 
+            // Save the final, full audio asynchronously after it has been collected
+            streamEndPromise.then(async () => {
+                const fullAudioBuffer = Buffer.concat(allChunks);
+                const finalAudioPath = await soundManager.saveFinalAudio(
+                    fullAudioBuffer,
+                    'tts',
+                    { uniqueId: mainChannel.id, callerId: mainChannel.caller.number },
+                    logger
+                );
+                callState.synthesizedAudioPath = finalAudioPath;
+                logger.info('Full TTS audio has been saved.');
+            });
+
+
         } catch (err) {
-            logger.error(`Error during TTS streaming playback:`, err);
+            logger.error(`Error during TTS playback:`, err);
         } finally {
             callState.isPlayingPrompt = false;
-            logger.info('Finished playing prompt.');
+            logger.info('Finished handling TTS prompt.');
+        }
+    }
+
+    async playTtsStream(callState, ttsAudioStream, allChunks, streamEndPromise) {
+        const { userBridge, logger, config: callConfig } = callState;
+        logger.info('Playing TTS in streaming mode.');
+
+        let resolveQueueEmpty;
+        const queueEmptyPromise = new Promise(resolve => {
+            resolveQueueEmpty = resolve;
+        });
+
+        const chunkQueue = [];
+        let streamFinished = false;
+        let processing = false;
+        let vadEnabled = false;
+
+        const processQueue = async () => {
+            if (processing || chunkQueue.length === 0 || !callState.isPlayingPrompt) {
+                if (streamFinished && chunkQueue.length === 0) {
+                    resolveQueueEmpty();
+                }
+                return;
+            }
+            processing = true;
+
+            if (!vadEnabled && callConfig.app.vad.activationMode === 'after_prompt_start') {
+                vadEnabled = true;
+                setTimeout(() => this.enableTalkDetection(callState), callConfig.app.vad.activationDelay);
+            }
+
+            const chunk = chunkQueue.shift();
+            try {
+                const tempAudioFile = await soundManager.saveTempAudio(chunk, logger);
+                logger.info(`Playing chunk ${tempAudioFile.filePath}.`);
+
+                const playback = this.ariClient.Playback();
+                callState.playbackId = playback.id;
+                playback.once('PlaybackFinished', () => {
+                    callState.playbackId = null;
+                    soundManager.cleanupTempAudio(tempAudioFile.filePath, logger);
+                    processing = false;
+                    processQueue();
+                });
+                await userBridge.play({ media: tempAudioFile.soundUri, playbackId: playback.id });
+            } catch (err) {
+                logger.error('Error processing TTS audio chunk:', err);
+                processing = false;
+            }
+        };
+
+        ttsAudioStream.on('data', (chunk) => {
+            if (chunk.length > 0) {
+                chunkQueue.push(chunk);
+                if (!processing) {
+                    processQueue();
+                }
+            }
+        });
+
+        streamEndPromise.then(() => {
+            streamFinished = true;
+            if (!processing) {
+                processQueue();
+            }
+        });
+
+        await queueEmptyPromise;
+        logger.info('All TTS chunks have been played.');
+
+        if (callConfig.app.vad.activationMode === 'after_prompt_end') {
+            this.enableTalkDetection(callState);
+        }
+    }
+
+    async playTtsFull(callState, allChunks, streamEndPromise) {
+        const { userBridge, logger, config: callConfig } = callState;
+        logger.info('Playing TTS in full mode.');
+
+        await streamEndPromise; // Wait for all chunks to arrive
+
+        const fullAudioBuffer = Buffer.concat(allChunks);
+        if (fullAudioBuffer.length === 0) {
+            logger.warn('TTS audio buffer is empty, nothing to play.');
+            return;
+        }
+
+        const tempAudioFile = await soundManager.saveTempAudio(fullAudioBuffer, logger);
+        logger.info(`Playing full audio file ${tempAudioFile.filePath}.`);
+
+        const playback = this.ariClient.Playback();
+        callState.playbackId = playback.id;
+        const playbackFinished = new Promise(resolve => playback.once('PlaybackFinished', resolve));
+
+        if (callConfig.app.vad.activationMode === 'after_prompt_start') {
+            setTimeout(() => this.enableTalkDetection(callState), callConfig.app.vad.activationDelay);
+        }
+
+        await userBridge.play({ media: tempAudioFile.soundUri, playbackId: playback.id });
+        await playbackFinished;
+
+        soundManager.cleanupTempAudio(tempAudioFile.filePath, logger);
+        logger.info('Finished playing full audio file.');
+
+        if (callConfig.app.vad.activationMode === 'after_prompt_end') {
+            this.enableTalkDetection(callState);
         }
     }
 
@@ -497,8 +555,8 @@ class App {
         const { mainChannel, userBridge, rtpServer, logger, config: callConfig } = callState;
         logger.info(`Enabling talk detection.`);
 
-        // Start pre-buffering audio to catch the beginning of speech
-        rtpServer.startPreBuffering(callConfig.rtpServer.preBufferSize);
+        // The RTP server is already pre-buffering continuously.
+        // We just need to set the no-input timer here.
 
         // Start no-input timer
         if (callConfig.app.timeouts.noInput > 0) {
@@ -529,8 +587,8 @@ class App {
 
             logger.info(`Talking started. Starting recognition session with Azure.`);
 
-            // Stop pre-buffering and get the buffered audio
-            const preBufferedAudio = rtpServer.stopPreBufferingAndFlush();
+            // Flush the pre-buffered audio
+            const preBufferedAudio = rtpServer.flushPreBuffer();
             if (preBufferedAudio.length > 0) {
                 callState.sttAudioChunks.push(preBufferedAudio);
             }
@@ -548,9 +606,8 @@ class App {
             // Now, start sending real-time audio
             callState.isRecognizing = true;
 
-            const finalText = await callState.recognitionPromise;
-            callState.finalTranscript = finalText;
-            logger.info(`Final transcript to be saved: ${finalText}`);
+            await callState.recognitionPromise;
+            logger.info(`Final transcript to be saved: ${callState.finalTranscript}`);
 
             await this.continueInDialplan(callState);
         };
@@ -667,7 +724,15 @@ class App {
                     await mainChannel.setChannelVar({ variable: 'DTMF_RESULT', value: callState.dtmfDigits });
                     await mainChannel.setChannelVar({ variable: 'RECOGNITION_MODE', value: 'DTMF' });
                 } else {
+                    // Always set the simple transcript
                     await mainChannel.setChannelVar({ variable: 'TRANSCRIPT', value: callState.finalTranscript });
+
+                    // Set the detailed JSON if it exists
+                    if (callState.finalTranscriptDetailed && callState.finalTranscriptDetailed.length > 0) {
+                        const detailedString = JSON.stringify(callState.finalTranscriptDetailed);
+                        await mainChannel.setChannelVar({ variable: 'TRANSCRIPT_DETAILED', value: detailedString });
+                    }
+
                     await mainChannel.setChannelVar({ variable: 'RECOGNITION_MODE', value: 'VOICE' });
                 }
                 await mainChannel.continueInDialplan();
