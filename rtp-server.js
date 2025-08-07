@@ -13,10 +13,14 @@ class RtpServer extends EventEmitter {
         this.socket = dgram.createSocket('udp4');
         this.address = null;
 
-        // --- Circular Buffer for Pre-Buffering ---
-        this.preBufferSize = preBufferSize;
+        // Jitter buffer and circular pre-buffer
+        this.jitterBuffer = new Map();
         this.preBuffer = [];
-        this.isRecognizing = false; // Flag to control audio processing
+        this.preBufferSize = preBufferSize;
+        this.lastPlayedSeq = -1;
+        this.isPlaying = false;
+        this.intervalId = null;
+        this.isRecognizing = false;
 
         this.socket.on('error', (err) => {
             this.logger.error(`RTP Server Error:\n${err.stack}`);
@@ -25,17 +29,12 @@ class RtpServer extends EventEmitter {
         });
 
         this.socket.on('message', (msg) => {
-            const audioPayload = msg.slice(12); // Extract audio payload from RTP packet
+            const sequenceNumber = msg.readUInt16BE(2);
+            const audioPayload = msg.slice(12);
+            this.jitterBuffer.set(sequenceNumber, audioPayload);
 
-            if (this.isRecognizing) {
-                // If recognition is active, emit the packet immediately.
-                this.emit('audioPacket', audioPayload);
-            } else {
-                // Otherwise, keep filling the circular pre-buffer.
-                this.preBuffer.push(audioPayload);
-                if (this.preBuffer.length > this.preBufferSize) {
-                    this.preBuffer.shift(); // Maintain the size of the circular buffer
-                }
+            if (!this.isPlaying) {
+                this.startPlayback();
             }
         });
 
@@ -68,27 +67,71 @@ class RtpServer extends EventEmitter {
                 this.socket.once('error', onError);
                 this.socket.bind(port, ip);
             };
-
             tryBind(startPort);
         });
     }
 
-    /**
-     * Flushes the current pre-buffer and starts emitting real-time packets.
-     * @returns {Buffer} The concatenated audio data from the pre-buffer.
-     */
+    startPlayback() {
+        this.isPlaying = true;
+        const MAX_MISSES = 5;
+        let missCount = 0;
+
+        this.intervalId = setInterval(() => {
+            if (this.jitterBuffer.size === 0) return;
+
+            if (this.lastPlayedSeq === -1) {
+                this.lastPlayedSeq = Math.min(...this.jitterBuffer.keys()) - 1;
+            }
+
+            const nextSeq = (this.lastPlayedSeq + 1) % 65536;
+
+            if (this.jitterBuffer.has(nextSeq)) {
+                missCount = 0;
+                const audioPayload = this.jitterBuffer.get(nextSeq);
+
+                if (this.isRecognizing) {
+                    this.emit('audioPacket', audioPayload);
+                } else {
+                    this.preBuffer.push(audioPayload);
+                    if (this.preBuffer.length > this.preBufferSize) {
+                        this.preBuffer.shift();
+                    }
+                }
+
+                this.jitterBuffer.delete(nextSeq);
+                this.lastPlayedSeq = nextSeq;
+            } else {
+                missCount++;
+                if (missCount > MAX_MISSES) {
+                    const sortedKeys = Array.from(this.jitterBuffer.keys()).sort((a, b) => {
+                        const diffA = (a - nextSeq + 65536) % 65536;
+                        const diffB = (b - nextSeq + 65536) % 65536;
+                        return diffA - diffB;
+                    });
+                    const nextAvailableSeq = sortedKeys[0];
+
+                    if (nextAvailableSeq !== undefined) {
+                        this.logger.warn(`RTP packet ${nextSeq} lost. Skipping to next available packet ${nextAvailableSeq}.`);
+                        this.lastPlayedSeq = nextAvailableSeq - 1;
+                    }
+                    missCount = 0;
+                }
+            }
+        }, 20);
+    }
+
     flushPreBuffer() {
         this.logger.info(`Flushing pre-buffer with ${this.preBuffer.length} packets.`);
         const flushedAudio = Buffer.concat(this.preBuffer);
-        this.preBuffer = []; // Clear the buffer
-        this.isRecognizing = true; // Switch to real-time emission
+        this.preBuffer = [];
+        this.isRecognizing = true;
         return flushedAudio;
     }
 
-    /**
-     * Stops the server and closes the socket.
-     */
     close() {
+        if (this.intervalId) {
+            clearInterval(this.intervalId);
+        }
         if (this.socket) {
             this.socket.close();
             this.logger.info('RTP Server stopped.');
