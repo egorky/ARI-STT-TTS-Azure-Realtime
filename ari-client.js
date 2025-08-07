@@ -310,8 +310,8 @@ class App {
         await callState.userBridge.addChannel({ channel: mainChannel.id });
         callState.logger.info(`User bridge ${callState.userBridge.id} created.`);
 
-        // Start RTP server
-        callState.rtpServer = new RtpServer(callState.logger);
+        // Start RTP server, passing the pre-buffer size from config
+        callState.rtpServer = new RtpServer(callState.logger, callConfig.rtpServer.preBufferSize);
         const rtpServerAddress = await callState.rtpServer.listen(callConfig.rtpServer.ip, callConfig.rtpServer.port);
 
         callState.rtpServer.on('audioPacket', (audio) => {
@@ -555,8 +555,8 @@ class App {
         const { mainChannel, userBridge, rtpServer, logger, config: callConfig } = callState;
         logger.info(`Enabling talk detection.`);
 
-        // Start pre-buffering audio to catch the beginning of speech
-        rtpServer.startPreBuffering(callConfig.rtpServer.preBufferSize);
+        // The RTP server is already pre-buffering continuously.
+        // We just need to set the no-input timer here.
 
         // Start no-input timer
         if (callConfig.app.timeouts.noInput > 0) {
@@ -587,8 +587,8 @@ class App {
 
             logger.info(`Talking started. Starting recognition session with Azure.`);
 
-            // Stop pre-buffering and get the buffered audio
-            const preBufferedAudio = rtpServer.stopPreBufferingAndFlush();
+            // Flush the pre-buffered audio
+            const preBufferedAudio = rtpServer.flushPreBuffer();
             if (preBufferedAudio.length > 0) {
                 callState.sttAudioChunks.push(preBufferedAudio);
             }
